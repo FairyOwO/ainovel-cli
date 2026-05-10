@@ -55,7 +55,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "help",
 			Group:       "system",
 			Usage:       "/help",
-			Description: "显示可用命令及其用法",
+			Description: "查看命令列表",
 			AutoExecute: true,
 			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
 				m.help = newHelpState(m.width, m.height)
@@ -67,7 +67,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "model",
 			Group:       "system",
 			Usage:       "/model [role]",
-			Description: "切换默认模型或指定角色模型",
+			Description: "切换默认或角色模型",
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				roleHint := ""
@@ -90,7 +90,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "report",
 			Group:       "analysis",
 			Usage:       "/report",
-			Description: "分析当前小说 output 产物并显示诊断报告",
+			Description: "诊断小说创作健康度",
 			AutoExecute: true,
 			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
 				m.reportSeq++
@@ -103,7 +103,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "import",
 			Group:       "writing",
 			Usage:       "/import <path> [from=N] [regex=...]",
-			Description: "导入外部 txt/md 章节，反推 foundation 后续写。Coordinator 必须空闲。",
+			Description: "反推外部小说续写",
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				m.importSeq++
@@ -124,7 +124,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "export",
 			Group:       "writing",
 			Usage:       "/export [path] [from=N] [to=M] [--overwrite]",
-			Description: "导出已完成章节为 TXT 文件（默认 {novelDir}/{NovelName}.txt）",
+			Description: "导出已完成章节为 TXT/EPUB",
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				cmd, err := startExport(m.runtime, args)
