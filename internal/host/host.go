@@ -583,21 +583,6 @@ func (h *Host) fillContextStatus(snap *UISnapshot) {
 			}
 		}
 	}
-	for _, agent := range snap.Agents {
-		if agent.Name != "coordinator" {
-			continue
-		}
-		p := agent.RecentProjection
-		if p.ContextWindow > 0 && p.Tokens > 0 {
-			snap.ProjectionTokens = p.Tokens
-			snap.ProjectionWindow = p.ContextWindow
-			snap.ProjectionPercent = p.Percent
-			snap.ProjectionStrategy = p.Strategy
-			snap.ProjectionCompacted = p.CompactedCount
-			snap.ProjectionKept = p.KeptCount
-		}
-		break
-	}
 }
 
 // fillDetails 填充详情区:设定、角色、最近 commit/review/摘要。
