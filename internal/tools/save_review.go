@@ -36,6 +36,7 @@ func (t *SaveReviewTool) Schema() map[string]any {
 	issueSchema := schema.Object(
 		schema.Property("type", schema.Enum("问题维度", "consistency", "character", "pacing", "continuity", "foreshadow", "hook", "aesthetic")).Required(),
 		schema.Property("severity", schema.Enum("严重程度", "critical", "error", "warning")).Required(),
+		schema.Property("risk_level", schema.Enum("网文商业风险分级", "S1", "S2", "S3", "S4")),
 		schema.Property("description", schema.String("问题描述")).Required(),
 		schema.Property("evidence", schema.String("证据：原文片段、具体情节或状态数据")).Required(),
 		schema.Property("suggestion", schema.String("修改建议")),
@@ -100,6 +101,14 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 				escalationReason = gate
 			}
 		}
+	}
+	if riskGate := evaluateRiskLevelGate(r.Issues); riskGate != "" {
+		if strings.Contains(riskGate, "rewrite") {
+			finalVerdict = "rewrite"
+		} else if finalVerdict == "accept" {
+			finalVerdict = "polish"
+		}
+		escalationReason = riskGate
 	}
 
 	// 根据最终 verdict 更新 Progress。
@@ -191,6 +200,9 @@ func validateReviewEntry(r domain.ReviewEntry) error {
 		if strings.TrimSpace(issue.Evidence) == "" {
 			return fmt.Errorf("issue evidence is required")
 		}
+		if issue.RiskLevel != "" && !validRiskLevel(issue.RiskLevel) {
+			return fmt.Errorf("invalid risk_level: %s", issue.RiskLevel)
+		}
 	}
 	if err := validateDimensions(r.Dimensions); err != nil {
 		return err
@@ -267,6 +279,31 @@ func evaluateScorecardGate(dimensions []domain.DimensionScore) string {
 	}
 	if len(polishIssues) > 0 {
 		return fmt.Sprintf("polish: 部分维度需打磨 %v", polishIssues)
+	}
+	return ""
+}
+
+func validRiskLevel(riskLevel string) bool {
+	switch riskLevel {
+	case "S1", "S2", "S3", "S4":
+		return true
+	default:
+		return false
+	}
+}
+
+func evaluateRiskLevelGate(issues []domain.ConsistencyIssue) string {
+	var hasS2 bool
+	for _, issue := range issues {
+		switch issue.RiskLevel {
+		case "S1":
+			return "rewrite: S1 商业风险必须重写"
+		case "S2":
+			hasS2 = true
+		}
+	}
+	if hasS2 {
+		return "polish: S2 商业风险至少需要打磨"
 	}
 	return ""
 }

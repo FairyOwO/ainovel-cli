@@ -6,8 +6,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
+
+func passingReviewDimensions() []map[string]any {
+	return []map[string]any{
+		{"dimension": "consistency", "score": 85, "verdict": "pass", "comment": "基本一致"},
+		{"dimension": "character", "score": 82, "verdict": "pass", "comment": "人设稳定"},
+		{"dimension": "pacing", "score": 81, "verdict": "pass", "comment": "节奏稳定"},
+		{"dimension": "continuity", "score": 84, "verdict": "pass", "comment": "连贯"},
+		{"dimension": "foreshadow", "score": 80, "verdict": "pass", "comment": "正常"},
+		{"dimension": "hook", "score": 83, "verdict": "pass", "comment": "钩子明确"},
+		{"dimension": "aesthetic", "score": 81, "verdict": "pass", "comment": "语言基本成立"},
+	}
+}
 
 func TestSaveReviewPersistsContractAssessment(t *testing.T) {
 	s := store.NewStore(t.TempDir())
@@ -174,5 +187,214 @@ func TestSaveReviewRejectsIssueWithoutEvidence(t *testing.T) {
 
 	if _, err := tool.Execute(context.Background(), args); err == nil || !strings.Contains(err.Error(), "issue evidence is required") {
 		t.Fatalf("expected issue evidence validation error, got %v", err)
+	}
+}
+
+func TestSaveReviewRiskLevelS1UpgradesAcceptToRewrite(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 6); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	args, err := json.Marshal(map[string]any{
+		"chapter":    3,
+		"scope":      "chapter",
+		"dimensions": passingReviewDimensions(),
+		"issues": []map[string]any{
+			{"type": "character", "severity": "warning", "risk_level": "S1", "description": "主角动机崩塌", "evidence": "原文突然放弃核心目标"},
+		},
+		"verdict": "accept",
+		"summary": "风险分级要求重写。",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload struct {
+		FinalVerdict string `json:"final_verdict"`
+		NextFlow     string `json:"next_flow"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if payload.FinalVerdict != "rewrite" || payload.NextFlow != "rewriting" {
+		t.Fatalf("expected S1 to force rewrite flow, got final=%q flow=%q", payload.FinalVerdict, payload.NextFlow)
+	}
+	review, err := s.World.LoadReview(3)
+	if err != nil {
+		t.Fatalf("LoadReview: %v", err)
+	}
+	if review.Issues[0].RiskLevel != "S1" {
+		t.Fatalf("expected risk_level persisted, got %+v", review.Issues[0])
+	}
+}
+
+func TestSaveReviewRiskLevelS2UpgradesAcceptToPolish(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 6); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	args, err := json.Marshal(map[string]any{
+		"chapter":    3,
+		"scope":      "chapter",
+		"dimensions": passingReviewDimensions(),
+		"issues": []map[string]any{
+			{"type": "pacing", "severity": "warning", "risk_level": "S2", "description": "爽点释放过迟", "evidence": "高潮直到章末才出现"},
+		},
+		"verdict": "accept",
+		"summary": "风险分级要求打磨。",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload struct {
+		FinalVerdict string `json:"final_verdict"`
+		NextFlow     string `json:"next_flow"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if payload.FinalVerdict != "polish" || payload.NextFlow != "polishing" {
+		t.Fatalf("expected S2 to force polish flow, got final=%q flow=%q", payload.FinalVerdict, payload.NextFlow)
+	}
+}
+
+func TestSaveReviewRiskLevelS2DoesNotDowngradeRewrite(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 6); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	args, err := json.Marshal(map[string]any{
+		"chapter":    3,
+		"scope":      "chapter",
+		"dimensions": passingReviewDimensions(),
+		"issues": []map[string]any{
+			{"type": "pacing", "severity": "error", "risk_level": "S2", "description": "节奏破坏阅读期待", "evidence": "关键冲突被整章跳过"},
+		},
+		"verdict":           "rewrite",
+		"summary":           "明确要求重写。",
+		"affected_chapters": []int{3},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload struct {
+		FinalVerdict string `json:"final_verdict"`
+		NextFlow     string `json:"next_flow"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if payload.FinalVerdict != "rewrite" || payload.NextFlow != "rewriting" {
+		t.Fatalf("expected S2 not to downgrade rewrite, got final=%q flow=%q", payload.FinalVerdict, payload.NextFlow)
+	}
+}
+
+func TestSaveReviewRejectsInvalidRiskLevel(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	args, err := json.Marshal(map[string]any{
+		"chapter":    3,
+		"scope":      "chapter",
+		"dimensions": passingReviewDimensions(),
+		"issues": []map[string]any{
+			{"type": "hook", "severity": "warning", "risk_level": "S5", "description": "非法风险分级", "evidence": "测试输入"},
+		},
+		"verdict": "accept",
+		"summary": "非法风险分级应被拒绝。",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	if _, err := tool.Execute(context.Background(), args); err == nil || !strings.Contains(err.Error(), "invalid risk_level") {
+		t.Fatalf("expected invalid risk_level validation error, got %v", err)
+	}
+}
+
+func TestSaveReviewRiskLevelS3S4DoNotForceRewrite(t *testing.T) {
+	for _, riskLevel := range []string{"S3", "S4"} {
+		t.Run(riskLevel, func(t *testing.T) {
+			s := store.NewStore(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			if err := s.Progress.Init("test", 6); err != nil {
+				t.Fatalf("InitProgress: %v", err)
+			}
+
+			tool := NewSaveReviewTool(s)
+			args, err := json.Marshal(map[string]any{
+				"chapter":    3,
+				"scope":      "chapter",
+				"dimensions": passingReviewDimensions(),
+				"issues": []map[string]any{
+					{"type": "hook", "severity": "warning", "risk_level": riskLevel, "description": "局部建议", "evidence": "章末句子略平"},
+				},
+				"verdict": "accept",
+				"summary": "低风险建议不应触发重写。",
+			})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+
+			result, err := tool.Execute(context.Background(), args)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			var payload struct {
+				FinalVerdict string `json:"final_verdict"`
+				NextFlow     string `json:"next_flow"`
+			}
+			if err := json.Unmarshal(result, &payload); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if payload.FinalVerdict == "rewrite" || payload.NextFlow == "rewriting" {
+				t.Fatalf("expected %s not to force rewrite, got final=%q flow=%q", riskLevel, payload.FinalVerdict, payload.NextFlow)
+			}
+		})
+	}
+}
+
+func TestReviewIssueRiskLevelIsOptionalForOldJSON(t *testing.T) {
+	var review domain.ReviewEntry
+	data := []byte(`{"chapter":3,"scope":"chapter","issues":[{"type":"hook","severity":"warning","description":"钩子弱","evidence":"章末缺悬念"}],"verdict":"polish","summary":"旧格式"}`)
+	if err := json.Unmarshal(data, &review); err != nil {
+		t.Fatalf("Unmarshal old review JSON: %v", err)
+	}
+	if review.Issues[0].RiskLevel != "" {
+		t.Fatalf("expected missing risk_level to load as empty, got %q", review.Issues[0].RiskLevel)
 	}
 }

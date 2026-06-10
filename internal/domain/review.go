@@ -34,8 +34,9 @@ type RelationshipEntry struct {
 
 // ConsistencyIssue 一致性问题。
 type ConsistencyIssue struct {
-	Type        string `json:"type"`     // consistency / character / pacing / continuity / foreshadow / hook / aesthetic
-	Severity    string `json:"severity"` // critical / error / warning
+	Type        string `json:"type"`                 // consistency / character / pacing / continuity / foreshadow / hook / aesthetic
+	Severity    string `json:"severity"`             // critical / error / warning
+	RiskLevel   string `json:"risk_level,omitempty"` // S1 / S2 / S3 / S4
 	Description string `json:"description"`
 	Evidence    string `json:"evidence,omitempty"` // 证据：原文片段、具体情节或状态数据
 	Suggestion  string `json:"suggestion,omitempty"`
