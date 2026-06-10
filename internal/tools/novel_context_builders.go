@@ -73,6 +73,24 @@ func (e architectContextEnvelope) apply(result map[string]any) {
 	mergeContextSection(result, e.References)
 }
 
+func (t *ContextTool) buildBenchmarkSummaries(result map[string]any, sectionKey string, warn func(string, error)) {
+	benchmarks, err := t.store.Benchmark.LoadSummaries()
+	if err != nil {
+		warn("benchmark_summaries", err)
+		return
+	}
+	if len(benchmarks) == 0 {
+		return
+	}
+	section, ok := result[sectionKey].(map[string]any)
+	if !ok {
+		section = map[string]any{}
+		result[sectionKey] = section
+	}
+	section["benchmark_summaries"] = benchmarks
+	result["benchmark_summaries"] = true
+}
+
 func mergeContextSection(result map[string]any, section map[string]any) {
 	for key, value := range section {
 		result[key] = value

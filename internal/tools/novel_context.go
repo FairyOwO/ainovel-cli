@@ -97,10 +97,12 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 		state := t.prepareChapterContext(a.Chapter, &seed, warn)
 		seed.apply(result)
 		t.buildChapterContext(result, state, warn)
+		t.buildBenchmarkSummaries(result, "working_memory", warn)
 	} else {
 		// Coordinator/Architect 路径：只返回状态 + 结构化数据，不加载全量原文
 		t.buildProgressStatus(result)
 		t.buildArchitectContext(result, warn)
+		t.buildBenchmarkSummaries(result, "planning_memory", warn)
 	}
 
 	// 注入 working_memory.user_rules（canonical 路径）。架构师路径原本没有 working_memory，
@@ -199,6 +201,9 @@ func buildLoadingSummary(result map[string]any, chapter int) string {
 	if n := countSlice("timeline"); n > 0 {
 		items = append(items, fmt.Sprintf("时间线:%d", n))
 	}
+	if n := benchmarkSummaryCount(result); n > 0 {
+		items = append(items, fmt.Sprintf("benchmark:%d", n))
+	}
 	if n := countSlice("foreshadow_ledger"); n > 0 {
 		items = append(items, fmt.Sprintf("伏笔:%d", n))
 	}
@@ -279,9 +284,26 @@ func sliceLen(v any) int {
 		return len(s)
 	case []domain.RecallItem:
 		return len(s)
+	case []domain.BenchmarkCompact:
+		return len(s)
+	case []domain.Benchmark:
+		return len(s)
 	default:
 		return 0
 	}
+}
+
+func benchmarkSummaryCount(result map[string]any) int {
+	for _, sectionKey := range []string{"working_memory", "planning_memory"} {
+		section, ok := result[sectionKey].(map[string]any)
+		if !ok {
+			continue
+		}
+		if n := sliceLen(section["benchmark_summaries"]); n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // loadFilteredCharacters 按 Tier 和场景出场过滤角色。

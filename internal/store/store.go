@@ -26,6 +26,7 @@ type Store struct {
 	Sessions    *SessionStore
 	Usage       *UsageStore
 	Simulation  *SimulationStore
+	Benchmark   *BenchmarkStore
 
 	crossMu sync.Mutex // 保护跨域原子操作
 }
@@ -50,6 +51,7 @@ func NewStore(dir string) *Store {
 		Sessions:    NewSessionStore(newIO(dir)),
 		Usage:       NewUsageStore(newIO(dir)),
 		Simulation:  NewSimulationStore(newIO(dir)),
+		Benchmark:   NewBenchmarkStore(newIO(dir)),
 	}
 }
 
@@ -124,7 +126,7 @@ func (s *Store) FoundationMissing() []string {
 // Init 创建所需的子目录结构。
 func (s *Store) Init() error {
 	return s.Progress.io.EnsureDirs([]string{
-		"chapters", "summaries", "drafts", "reviews", "meta", "meta/runtime", "meta/runtime/tasks", "meta/sessions", "meta/sessions/agents",
+		"chapters", "summaries", "drafts", "reviews", "meta", "meta/benchmarks", "meta/runtime", "meta/runtime/tasks", "meta/sessions", "meta/sessions/agents",
 	})
 }
 
