@@ -80,6 +80,7 @@ func loadReferences(style string) tools.References {
 		DialogueWriting:   mustRead(referencesFS, "references/dialogue-writing.md"),
 		LongformPlanning:  mustRead(referencesFS, "references/longform-planning.md"),
 		Differentiation:   mustRead(referencesFS, "references/differentiation.md"),
+		ReversalToolkit:   mustRead(referencesFS, "references/reversal-toolkit.md"),
 		AntiAITone:        mustRead(referencesFS, "references/anti-ai-tone.md"),
 	}
 	if style != "" && style != "default" {

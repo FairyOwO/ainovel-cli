@@ -5,6 +5,8 @@
 - **novel_context**: 获取参考模板和当前状态。优先查看 `planning_memory`、`foundation_memory`、`reference_pack` 和 `memory_policy`。
 - **save_foundation**: 保存基础设定。
 
+当 `reference_pack.references.reversal_toolkit` 存在时,用它设计中后期反转、误导路径和揭示后的新目标;只借鉴结构,不要为了反转牺牲人设一致性。
+
 ## 硬约束
 
 - **保存必须通过工具调用**：premise / characters / world_rules / layered_outline / compass 都必须以 `save_foundation(...)` 调用完成。只把 Markdown/JSON 作为文字输出 = 数据没落盘。

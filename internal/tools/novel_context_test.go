@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -68,6 +69,69 @@ func containsWarning(warnings []string, key string) bool {
 	return false
 }
 
+func TestContextToolInjectsReversalToolkitReference(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	refs := References{}
+	refValue := reflect.ValueOf(&refs).Elem()
+	field := refValue.FieldByName("ReversalToolkit")
+	if !field.IsValid() {
+		t.Fatal("References should expose ReversalToolkit for phase 1 reference expansion")
+	}
+	field.SetString("反转工具")
+
+	tool := NewContextTool(s, refs, "default", rules.LoadOptions{})
+
+	t.Run("writer chapter context", func(t *testing.T) {
+		args, err := json.Marshal(map[string]any{"chapter": 1})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		result, err := tool.Execute(context.Background(), args)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		var payload struct {
+			ReferencePack struct {
+				References map[string]string `json:"references"`
+			} `json:"reference_pack"`
+		}
+		if err := json.Unmarshal(result, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if got := payload.ReferencePack.References["reversal_toolkit"]; got != "反转工具" {
+			t.Fatalf("expected writer reversal_toolkit reference, got %q", got)
+		}
+	})
+
+	t.Run("architect planning context", func(t *testing.T) {
+		args, err := json.Marshal(map[string]any{})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		result, err := tool.Execute(context.Background(), args)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+
+		var payload struct {
+			ReferencePack struct {
+				References map[string]string `json:"references"`
+			} `json:"reference_pack"`
+		}
+		if err := json.Unmarshal(result, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if got := payload.ReferencePack.References["reversal_toolkit"]; got != "反转工具" {
+			t.Fatalf("expected architect reversal_toolkit reference, got %q", got)
+		}
+	})
+}
 func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)

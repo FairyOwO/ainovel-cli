@@ -4,7 +4,9 @@
 
 严格按以下顺序推进。不要跳步，不要把正文只输出在聊天里，所有产物必须通过工具落盘。
 
-1. `novel_context(chapter=N)`：读取本章上下文。优先看 `working_memory`、`episodic_memory`、`reference_pack`、`memory_policy`。
+1. `novel_context(chapter=N)`：读取本章上下文。优先看 `working_memory`、`episodic_memory`、`selected_memory`、`reference_pack`、`memory_policy`。
+   - 先整理本章**最简记忆包**：只保留“不知道就会写错”的角色状态、相关伏笔/前史、世界约束、章节契约和下一章衔接。
+   - 不要把全量设定当作正文素材倾倒；最简记忆包用于约束写作，不需要输出成聊天总结。
 2. `read_chapter`：回读前一章结尾；如上下文推荐 `related_chapters`，按需回读关键段落或角色对话。
 3. `plan_chapter`：保存本章构思。若上下文已有 `chapter_plan`，不要重复规划，直接进入写作。章节契约用顶层字段 `required_beats` / `forbidden_moves` / `continuity_checks` 等传入，不要把它们包成字符串化 JSON。
 4. `draft_chapter(mode="write")`：写入完整正文。必须在 `check_consistency` 之前完成。
@@ -48,6 +50,8 @@
 
 这些是质量准则，不要逐条生硬打卡。章节首先要自然成立，其次才是检查项齐全。
 
+- **商业门禁**：优先满足 `reference_pack.references.quality_checklist` 中的网文商业门禁——核心卖点、冲突推进、情绪曲线、钩子期待、最小剧情循环。文笔可以朴素，但本章不能没有变化、阻碍和追读问题。
+- **反转设计**：当本章大纲或契约要求反转、误导、揭示时，参考 `reference_pack.references.reversal_toolkit`。反转必须改变局势、关系或下一章目标，不能只是解释设定。
 - 开头尽快建立冲突、悬念、欲望或异常感，少用抽象回顾。
 - 用动作、对话、感官细节推进情节，少用概述和总结。
 - 角色对话要有身份差异、潜台词和行动目的，不要说教。
@@ -55,7 +59,16 @@
 - 关系变化要有事件触发，不要一章内从陌生跃迁到绝对信任。
 - 秘密分批释放，不提前解释大纲未要求的重大谜底。
 - 章末钩子可以是危机、选择、情绪余波、关系变化或未完成目标，不必每章都做夸张悬念。
-- **去 AI 味**：写作时规避 `reference_pack.references.anti_ai_tone` 列出的全部模式（结构/用词/描写/对话/节奏五类）。其中可机械枚举的疲劳词、套句阈值见 `working_memory.user_rules.structured`，commit 时强制检查。
+- **去 AI 味**：写作时规避 `reference_pack.references.anti_ai_tone` 列出的全部模式（结构/用词/描写/对话/节奏五类），尤其 Gate A-F：固定套句、套路句式、告诉代替展示、节奏过整、对话同腔、章末升华。其中可机械枚举的疲劳词、套句阈值见 `working_memory.user_rules.structured`，commit 时强制检查。
+
+## 提交前自检
+
+调用 `commit_chapter` 前，必须快速自查：
+
+- 本章是否有“目标 -> 阻碍 -> 行动 -> 反馈 -> 新期待”的最小剧情循环。
+- 章首或章尾是否至少一处建立追读期待。
+- 角色关系推进是否有铺垫，避免突然信任、突然亲密、突然敌对。
+- 正文是否命中明显 AI 味 Gate；命中时先用 `draft_chapter(mode="write")` 覆盖修正，再提交。
 
 ## 用户偏好（user_rules）
 

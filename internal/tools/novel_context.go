@@ -30,6 +30,7 @@ type References struct {
 	StyleReference   string // 风格补充参考（可为空）
 	LongformPlanning string // 通用长篇规划参考
 	Differentiation  string // 通用差异化设计参考
+	ReversalToolkit  string // 反转设计参考（writer/architect 共用）
 	ArcTemplates     string // 题材弧型模板（按 style 加载，可为空）
 	AntiAITone       string // 去 AI 味判据库（writer/editor 共用，全程注入）
 }
@@ -400,6 +401,7 @@ func (t *ContextTool) writerReferences(chapter int) map[string]string {
 	// 渐进式加载：始终保留核心参考，前 3 章额外加载完整写作指南
 	add("consistency", t.refs.Consistency)
 	add("hook_techniques", t.refs.HookTechniques)
+	add("reversal_toolkit", t.refs.ReversalToolkit)
 	add("quality_checklist", t.refs.QualityChecklist)
 	add("anti_ai_tone", t.refs.AntiAITone) // 去 AI 味判据全程注入，不随章节裁剪
 	if chapter <= 3 {
@@ -427,6 +429,7 @@ func (t *ContextTool) architectReferences() map[string]string {
 	add("character_template", t.refs.CharacterTemplate)
 	add("longform_planning", t.refs.LongformPlanning)
 	add("differentiation", t.refs.Differentiation)
+	add("reversal_toolkit", t.refs.ReversalToolkit)
 	add("style_reference", t.refs.StyleReference)
 	add("arc_templates", t.refs.ArcTemplates)
 	add("anti_ai_tone", t.refs.AntiAITone) // architect 大纲去 AI 腔；亦兜 editor 走 Chapter=0 路径

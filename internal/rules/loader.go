@@ -101,6 +101,32 @@ func readDirFromDisk(dir string, kind SourceKind) []Parsed {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return []Parsed{{
+			Source: dir,
+			Kind:   kind,
+			Conflicts: []Conflict{{
+				Source: dir,
+				Kind:   ConflictParseError,
+				Detail: "规则目录读取失败: " + err.Error(),
+			}},
+		}}
+	}
+	if !info.IsDir() {
+		return []Parsed{{
+			Source: dir,
+			Kind:   kind,
+			Conflicts: []Conflict{{
+				Source: dir,
+				Kind:   ConflictParseError,
+				Detail: "规则目录读取失败: 不是目录",
+			}},
+		}}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

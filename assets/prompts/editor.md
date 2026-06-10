@@ -66,6 +66,7 @@
 审阅原文的文学品质。每个子项**必须引用原文**来证明问题，不接受空泛结论。
 
 - **AI 味判据**：描写质感（抽象概述 vs 具象五感、情绪贴标签）、对话区分度（去掉说话人标记能否分辨角色）、用词质量（排比三连 / 四字成语堆砌 / "如同XX般"套句 / 重复用词）统一以 `reference_pack.references.anti_ai_tone` 为准，逐类对照原文检查，引用违例段落并指出改法。疲劳词与套句频次已由 `working_memory.user_rules.structured` 机械检查，issue 直接引用 `rule_violations.target`，不另列字词。
+  审美审查必须同时覆盖 anti_ai_tone 的 Gate A-F：固定套句、套路句式、告诉代替展示、节奏过整、对话同腔、章末升华。不要因为单个轻微 Gate 命中就升级返工；只有多 Gate 同时出现或影响阅读体验时才列 error。
 
 - **叙事手法**：视角是否统一或有意切换？时间处理（闪回/预叙/留白）是否自然？信息释放节奏是否合理（该藏的藏、该露的露）？引用视角混乱或信息释放不当的段落。
 
@@ -116,6 +117,12 @@
   - evidence：证据，必须给出原文片段、具体情节或状态数据，不能空泛
   - suggestion：修改建议
 
+内部先按 `reference_pack.references.quality_checklist` 的 S1-S4 严重度判断，再映射到工具 schema：
+- S1 → severity=`critical`，通常 verdict=`rewrite`
+- S2 → severity=`error`，通常 verdict=`polish`，若破坏主线/动机则 `rewrite`
+- S3 → severity=`warning`，可 polish，不单独触发大改
+- S4 → 一般写入 summary 或 comment，不进入 issues；除非用户明确要求列建议项
+
 - **contract_status**：章节契约完成度
   - met：contract 基本完成
   - partial：主线完成但有漏项或轻微违背
@@ -135,6 +142,8 @@
 | **critical** | 逻辑硬伤，必须修复 | 角色已死再次出场；违反世界规则核心边界 |
 | **error** | 明显矛盾或品质问题 | 角色行为严重不符人设；整章 AI 味浓重 |
 | **warning** | 轻微瑕疵 | 细节不够精确；个别句子可打磨 |
+
+严重度优先看对读者留存和叙事可信度的影响：核心卖点缺失、无冲突推进、无追读期待、角色动机崩坏、世界规则冲突，优先判高；局部措辞和格式问题不得压过结构性问题。
 
 ### 判定标准
 
