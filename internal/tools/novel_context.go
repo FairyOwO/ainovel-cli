@@ -94,7 +94,7 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 		// Writer 路径：加载全量基础数据 + 章节上下文
 		t.buildBaseContext(result, warn)
 		seed := newChapterContextEnvelope()
-		state := t.prepareChapterContext(a.Chapter, &seed, result, warn)
+		state := t.prepareChapterContext(a.Chapter, &seed, warn)
 		seed.apply(result)
 		t.buildChapterContext(result, state, warn)
 	} else {
@@ -819,10 +819,7 @@ func hasMeaningfulOverlap(a, b string) bool {
 	if len(ar) < 5 || len(br) < 5 {
 		return false
 	}
-	shorter := len(ar)
-	if len(br) < shorter {
-		shorter = len(br)
-	}
+	shorter := min(len(ar), len(br))
 	threshold := 5
 	switch {
 	case shorter >= 12:

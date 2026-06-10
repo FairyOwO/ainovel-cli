@@ -132,6 +132,7 @@ func TestContextToolInjectsReversalToolkitReference(t *testing.T) {
 		}
 	})
 }
+
 func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)
@@ -584,6 +585,146 @@ func TestContextToolSelectedMemoryIncludesGlobalReviewLessons(t *testing.T) {
 	}
 }
 
+func TestContextToolSelectedMemoryIncludesMinimalContext(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 1, Title: "旧伤", CoreEvent: "林砚带伤守住试炼资格"},
+		{Chapter: 2, Title: "试炼", CoreEvent: "林砚必须兑现试炼资格", Hook: "令牌为何发烫"},
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Progress.Init("test", 4); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Characters.Save([]domain.Character{
+		{Name: "林砚", Role: "主角", Description: "外门少年", Arc: "从自保走向主动争取", Traits: []string{"冷静", "带伤"}},
+	}); err != nil {
+		t.Fatalf("SaveCharacters: %v", err)
+	}
+	if err := s.World.SaveWorldRules([]domain.WorldRule{
+		{Category: "magic", Rule: "试炼令牌只会回应被选中者", Boundary: "令牌不能转赠"},
+	}); err != nil {
+		t.Fatalf("SaveWorldRules: %v", err)
+	}
+	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
+		{ID: "trial_token", Description: "试炼令牌发烫意味着内门在观察林砚", PlantedAt: 1, Status: "planted"},
+	}); err != nil {
+		t.Fatalf("SaveForeshadowLedger: %v", err)
+	}
+	if err := s.World.AppendStateChanges([]domain.StateChange{
+		{Chapter: 1, Entity: "林砚", Field: "左臂旧伤", OldValue: "隐痛", NewValue: "试炼前仍未痊愈"},
+	}); err != nil {
+		t.Fatalf("AppendStateChanges: %v", err)
+	}
+	if err := s.World.SaveRelationships([]domain.RelationshipEntry{
+		{CharacterA: "林砚", CharacterB: "长老", Relation: "被暗中观察", Chapter: 1},
+	}); err != nil {
+		t.Fatalf("SaveRelationships: %v", err)
+	}
+	if err := s.Drafts.SaveChapterPlan(domain.ChapterPlan{
+		Chapter: 2,
+		Title:   "试炼",
+		Goal:    "让林砚主动回应试炼资格",
+		Contract: domain.ChapterContract{
+			ContinuityChecks: []string{"林砚左臂旧伤仍未痊愈"},
+			PayoffPoints:     []string{"回应试炼令牌发烫"},
+			HookGoal:         "让读者追问内门为何观察林砚",
+		},
+	}); err != nil {
+		t.Fatalf("SaveChapterPlan: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, err := json.Marshal(map[string]any{"chapter": 2})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload struct {
+		Selected struct {
+			MinimalContext struct {
+				CharacterStates  []string `json:"character_states"`
+				CausalHistory    []string `json:"causal_history"`
+				WorldConstraints []string `json:"world_constraints"`
+				ChapterIntent    string   `json:"chapter_intent"`
+			} `json:"minimal_context"`
+		} `json:"selected_memory"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	minimal := payload.Selected.MinimalContext
+	if minimal.ChapterIntent != "让林砚主动回应试炼资格" {
+		t.Fatalf("unexpected chapter intent: %q", minimal.ChapterIntent)
+	}
+	if !containsStringPart(minimal.CharacterStates, "左臂旧伤") || !containsStringPart(minimal.CharacterStates, "被暗中观察") {
+		t.Fatalf("expected character states from state and relationship data, got %+v", minimal.CharacterStates)
+	}
+	if !containsStringPart(minimal.CausalHistory, "令牌") || !containsStringPart(minimal.CausalHistory, "Payoff") {
+		t.Fatalf("expected causal history from foreshadow and contract payoff, got %+v", minimal.CausalHistory)
+	}
+	if !containsStringPart(minimal.WorldConstraints, "不能转赠") || !containsStringPart(minimal.WorldConstraints, "旧伤仍未痊愈") {
+		t.Fatalf("expected world constraints from world rules and continuity checks, got %+v", minimal.WorldConstraints)
+	}
+}
+
+func TestContextToolMinimalContextUsesStableEmptyFields(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "起点", CoreEvent: "故事开始"}}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Progress.Init("test", 1); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, err := json.Marshal(map[string]any{"chapter": 1})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	selected, ok := payload["selected_memory"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected selected_memory with minimal_context, got %+v", payload["selected_memory"])
+	}
+	minimal, ok := selected["minimal_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected minimal_context, got %+v", selected)
+	}
+	for _, key := range []string{"character_states", "causal_history", "world_constraints"} {
+		items, ok := minimal[key].([]any)
+		if !ok {
+			t.Fatalf("expected %s to be an array, got %+v", key, minimal[key])
+		}
+		if len(items) != 0 {
+			t.Fatalf("expected empty %s, got %+v", key, items)
+		}
+	}
+	if got, ok := minimal["chapter_intent"].(string); !ok || got != "故事开始" {
+		t.Fatalf("expected chapter_intent to fall back to outline core event, got %+v", minimal["chapter_intent"])
+	}
+}
+
 func TestContextToolKeepsFullForeshadowWhenRecallNotTriggered(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)
@@ -623,8 +764,15 @@ func TestContextToolKeepsFullForeshadowWhenRecallNotTriggered(t *testing.T) {
 	if _, ok := payload["foreshadow_ledger"]; !ok {
 		t.Fatal("expected full foreshadow ledger to remain when selected recall is not triggered")
 	}
-	if _, ok := payload["selected_memory"]; ok {
-		t.Fatalf("expected no selected_memory for small foreshadow sets, got %+v", payload["selected_memory"])
+	if selected, ok := payload["selected_memory"].(map[string]any); ok {
+		if _, exists := selected["story_threads"]; exists {
+			t.Fatalf("expected no story_threads for small foreshadow sets, got %+v", selected["story_threads"])
+		}
+		if _, exists := selected["minimal_context"]; !exists {
+			t.Fatalf("expected minimal_context to remain stable, got %+v", selected)
+		}
+	} else {
+		t.Fatalf("expected selected_memory with minimal_context, got %+v", payload["selected_memory"])
 	}
 }
 
@@ -681,6 +829,15 @@ func TestContextToolFallsBackToFullForeshadowWhenSelectionIsTooSparse(t *testing
 func containsRecallSummary(items []domain.RecallItem, want string) bool {
 	for _, item := range items {
 		if strings.Contains(item.Summary, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStringPart(items []string, want string) bool {
+	for _, item := range items {
+		if strings.Contains(item, want) {
 			return true
 		}
 	}

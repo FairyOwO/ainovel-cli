@@ -2,6 +2,7 @@ package tools
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
@@ -180,7 +181,7 @@ func (t *ContextTool) buildBaseContext(result map[string]any, warn func(string, 
 	}
 }
 
-func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContextEnvelope, result map[string]any, warn func(string, error)) contextBuildState {
+func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContextEnvelope, warn func(string, error)) contextBuildState {
 	state := contextBuildState{
 		chapter: chapter,
 		profile: domain.NewContextProfile(0),
@@ -364,12 +365,140 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 }
 
 func (t *ContextTool) buildChapterSelectedMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
+	envelope.Selected["minimal_context"] = t.buildMinimalContext(state, warn)
 	if len(state.storyThreads) > 0 {
 		envelope.Selected["story_threads"] = state.storyThreads
 	}
 	if lessons := t.selectReviewLessons(state.chapter, warn); len(lessons) > 0 {
 		envelope.Selected["review_lessons"] = lessons
 	}
+}
+
+func (t *ContextTool) buildMinimalContext(state contextBuildState, warn func(string, error)) map[string]any {
+	characterStates := uniqueStrings(t.minimalCharacterStates(state, warn))
+	causalHistory := uniqueStrings(t.minimalCausalHistory(state))
+	worldConstraints := uniqueStrings(t.minimalWorldConstraints(state, warn))
+
+	return map[string]any{
+		"character_states":  characterStates,
+		"causal_history":    causalHistory,
+		"world_constraints": worldConstraints,
+		"chapter_intent":    minimalChapterIntent(state),
+	}
+}
+
+func (t *ContextTool) minimalCharacterStates(state contextBuildState, warn func(string, error)) []string {
+	var items []string
+	if state.profile.Layered {
+		if snapshots, err := t.store.Characters.LoadLatestSnapshots(); err == nil {
+			for _, snapshot := range snapshots {
+				items = append(items, joinNonEmpty(" / ", snapshot.Name, snapshot.Status, snapshot.Power, snapshot.Motivation, snapshot.Relations))
+			}
+		} else {
+			warn("character_snapshots", err)
+		}
+	} else if chars, err := t.store.Characters.Load(); err == nil {
+		for _, char := range chars {
+			items = append(items, joinNonEmpty(" / ", char.Name, char.Role, char.Description, char.Arc, strings.Join(char.Traits, "、")))
+		}
+	} else {
+		warn("characters", err)
+	}
+
+	for _, change := range recentStateChanges(state.chapter, state.allStateChanges) {
+		items = append(items, joinNonEmpty(" ", change.Entity, change.Field, change.OldValue+"->"+change.NewValue))
+	}
+	for _, rel := range state.relationships {
+		items = append(items, joinNonEmpty(" ", rel.CharacterA, rel.Relation, rel.CharacterB))
+	}
+	return items
+}
+
+func (t *ContextTool) minimalCausalHistory(state contextBuildState) []string {
+	var items []string
+	for _, thread := range state.storyThreads {
+		items = append(items, thread.Summary)
+	}
+	for _, entry := range state.foreshadow {
+		items = append(items, joinNonEmpty(" ", entry.ID, entry.Description, entry.Status))
+	}
+	if state.chapterPlan != nil {
+		for _, payoff := range state.chapterPlan.Contract.PayoffPoints {
+			items = append(items, "Payoff: "+payoff)
+		}
+		if state.chapterPlan.Contract.HookGoal != "" {
+			items = append(items, "Hook: "+state.chapterPlan.Contract.HookGoal)
+		}
+	}
+	return items
+}
+
+func (t *ContextTool) minimalWorldConstraints(state contextBuildState, warn func(string, error)) []string {
+	var items []string
+	if rules, err := t.store.World.LoadWorldRules(); err == nil {
+		for _, rule := range rules {
+			items = append(items, joinNonEmpty(" / ", rule.Category, rule.Rule, rule.Boundary))
+		}
+	} else {
+		warn("world_rules", err)
+	}
+	if state.chapterPlan != nil {
+		items = append(items, state.chapterPlan.Contract.ForbiddenMoves...)
+		items = append(items, state.chapterPlan.Contract.ContinuityChecks...)
+	}
+	return items
+}
+
+func minimalChapterIntent(state contextBuildState) string {
+	if state.chapterPlan != nil && strings.TrimSpace(state.chapterPlan.Goal) != "" {
+		return state.chapterPlan.Goal
+	}
+	if state.currentEntry != nil {
+		if strings.TrimSpace(state.currentEntry.CoreEvent) != "" {
+			return state.currentEntry.CoreEvent
+		}
+		return state.currentEntry.Hook
+	}
+	return ""
+}
+
+func recentStateChanges(chapter int, changes []domain.StateChange) []domain.StateChange {
+	start := max(chapter-2, 1)
+	var recent []domain.StateChange
+	for _, change := range changes {
+		if change.Chapter >= start && change.Chapter < chapter {
+			recent = append(recent, change)
+		}
+	}
+	return recent
+}
+
+func uniqueStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+	}
+	return result
+}
+
+func joinNonEmpty(sep string, parts ...string) string {
+	compact := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" && part != "->" {
+			compact = append(compact, part)
+		}
+	}
+	return strings.Join(compact, sep)
 }
 
 func (t *ContextTool) buildChapterEpisodicMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
