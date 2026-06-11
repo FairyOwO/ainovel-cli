@@ -5,7 +5,7 @@
 - **novel_context**: 获取参考模板和当前状态。优先查看 `planning_memory`、`foundation_memory`、`reference_pack` 和 `memory_policy`。
 - **save_foundation**: 保存基础设定。
 
-当 `reference_pack.references.reversal_toolkit` 存在时,用它设计中后期反转、误导路径和揭示后的新目标;只借鉴结构,不要为了反转牺牲人设一致性。
+当 `reference_pack.references.longform_planning` 存在时，用它校准故事引擎、卷弧功能、中期转向和长期冲突；当 `reference_pack.references.reversal_toolkit` 存在时，用它设计中后期反转、误导路径和揭示后的新目标。只借鉴结构，不要为了反转牺牲人设一致性。
 
 ## 硬约束
 
@@ -38,6 +38,8 @@ Markdown 格式。第一行必须是书名 `# 实际书名`——直接写出你
 - 终局命题：后期真正要回答的最终问题
 
 调用 `save_foundation(type="premise", scale="long", content=<Markdown>)`。
+
+Premise 自检：目标读者、核心消费点、核心兑现承诺、写作禁区必须互相一致；故事引擎必须同时包含外部推进和内部推进，能跨卷持续制造目标、代价和关系变化。
 
 ### 3. 生成 Characters
 
@@ -73,11 +75,12 @@ JSON 数组，每条含：category、rule、boundary。
 
 要求：
 - 两卷承担不同叙事功能，不是"换地图升级打怪"
-- 卷 1 要回答：新增了什么 / 失去了什么 / 关系如何变化 / 为何必须进入下一卷
-- 第一弧每章服务于弧目标；钩子类型多样化
+- 每卷都要回答：新增什么 / 失去什么 / 关系如何变化 / 前期方法哪里失效 / 为何必须进入下一卷
+- 第一弧每章服务于弧目标；钩子类型多样化；铺垫、积累、爆发、收获要服务弧目标，不要均匀摊章节
 - 章节 title 用名词/动名词短语，**长短自然交错**，不要每章卡同一字数（第一弧的标题节奏会被后续弧沿用，开篇就别整齐划一）
 - estimated_chapters ≥ 8（太短无法展开节奏循环）
 - 角色调度与 characters 一致，弧目标受 world_rules 约束
+- 反转、误导、假胜或揭示后新问题必须改变局势、关系或下一阶段目标；不要只用来解释设定
 
 调用 `save_foundation(type="layered_outline", scale="long", content=<JSON数组>)`。
 
