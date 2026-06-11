@@ -189,11 +189,13 @@ func saveExampleConfig() {
     "bedrock": {
       "base_url": ""
     }
-    // 自定义代理示例：
+    // 自定义 OpenAI 兼容端点示例（自建/网关/厂商如 nvidia）：
     // "my-proxy": {
-    //   "type": "openai",
-    //   "api_key": "sk-xxx", // 可选：若代理不需要认证可省略
-    //   "base_url": "https://proxy.example.com/v1"
+    //   "type": "openrouter",        // 选一个 compat 协议名即可逐字透传 extra_body
+    //   "api_key": "sk-xxx",         // 可选：若端点不需要认证可省略
+    //   "base_url": "https://proxy.example.com/v1",
+    //   // 可选：透传给每次请求的额外参数（采样/厂商特有键，如 nvidia 开 think）
+    //   "extra_body": { "temperature": 0.8, "min_p": 0.05, "chat_template_kwargs": { "enable_thinking": true } }
     // }
   },
 
