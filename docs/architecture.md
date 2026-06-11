@@ -304,6 +304,8 @@ type Host struct {
     routerDetach func()
     usage        *UsageTracker
     usageCancel  context.CancelFunc
+    budget       *BudgetSentinel   // Host 政策组件：执行用户预算声明（等同代为 Abort），订阅先于 Dispatcher
+    notifier     *notify.Notifier  // 观察层：run_end/repeat/budget 三类告警的离屏副本，永不介入控制流
 
     events, streamCh, done chan ...
 
@@ -452,6 +454,7 @@ assets/
 12. **不写 Host 端的 Flow 状态机**。Flow 标签只由工具更新，Router 只读不写。
 13. **不为"LLM 幻觉"写兜底硬编码**。优化 prompt、改进工具返回值结构、让 `novel_context` 更清楚地呈现事实——而不是 Host 强制改流程。
 14. **不让 diag / 观察层介入控制流**。诊断只读、只产 Finding 与脱敏导出；自动修复 / 续跑 / 改流程一律不做（见 §2.3 观察者纪律）。
+15. **预算与告警不进 Route/工具层，告警不进控制流**。`BudgetSentinel` 是 Host 政策组件（执行用户预先签署的 Abort，不评估模型行为）；`notify` 是纯观察（不重试、不改派、不停机）。`flow.Route` 保持纯函数，对两者无感知。
 
 ---
 

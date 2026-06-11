@@ -377,3 +377,40 @@ func Test_UsageTracker_AccumulatesAnyRoleWithUsage(t *testing.T) {
 		t.Errorf("有 Usage 不应计入 missing")
 	}
 }
+
+// Test_UsageTracker_OnCostCallback 验证预算哨兵的接线点：每次记账后
+// 锁外回调携带最新累计成本（含 provider 自报 cost 路径）。
+func Test_UsageTracker_OnCostCallback(t *testing.T) {
+	tk := NewUsageTracker(nil, nil)
+	var got []float64
+	tk.SetOnCost(func(total float64) { got = append(got, total) })
+
+	msg := func(cost float64) agentcore.AgentMessage {
+		return agentcore.Message{
+			Role:  agentcore.RoleAssistant,
+			Usage: &agentcore.Usage{Input: 100, Output: 10, Cost: &agentcore.Cost{Total: cost}},
+		}
+	}
+	tk.Record("writer", msg(0.5))
+	tk.Record("writer", msg(0.25))
+
+	if len(got) != 2 || got[0] != 0.5 || got[1] != 0.75 {
+		t.Fatalf("onCost should carry growing totals, got %v", got)
+	}
+}
+
+// Test_UsageTracker_OnMissingUsageOnce 验证盲区回调只在首次触发。
+func Test_UsageTracker_OnMissingUsageOnce(t *testing.T) {
+	tk := NewUsageTracker(nil, nil)
+	fired := 0
+	tk.SetOnMissingUsage(func() { fired++ })
+
+	noUsage := agentcore.Message{Role: agentcore.RoleAssistant, Content: []agentcore.ContentBlock{agentcore.TextBlock("正文")}}
+	tk.Record("writer", noUsage)
+	tk.Record("writer", noUsage)
+	tk.Record("editor", noUsage)
+
+	if fired != 1 {
+		t.Fatalf("onMissingUsage should fire exactly once, got %d", fired)
+	}
+}

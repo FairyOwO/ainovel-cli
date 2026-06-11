@@ -151,6 +151,14 @@ func mergeConfig(base, overlay Config) Config {
 		}
 	}
 
+	// Budget / Notify：整块覆盖（项目级预算/告警是独立政策声明，不与全局逐字段拼接）
+	if overlay.Budget != (BudgetConfig{}) {
+		base.Budget = overlay.Budget
+	}
+	if overlay.Notify.Enabled != nil || overlay.Notify.Command != "" || len(overlay.Notify.Events) > 0 {
+		base.Notify = overlay.Notify
+	}
+
 	return base
 }
 

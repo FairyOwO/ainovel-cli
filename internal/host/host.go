@@ -23,6 +23,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/host/imp"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	modelreg "github.com/voocel/ainovel-cli/internal/models"
+	"github.com/voocel/ainovel-cli/internal/notify"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/tools"
@@ -45,6 +46,9 @@ type Host struct {
 	routerDetach      func()
 	usage             *UsageTracker
 	usageCancel       context.CancelFunc // 停掉 autoSaveLoop 并触发最后一次 flush
+	budget            *BudgetSentinel    // 预算政策；未启用为 nil（方法 nil 安全）
+	budgetDetach      func()
+	notifier          *notify.Notifier // 无人值守告警；未启用为 nil（Send nil 安全）
 
 	events   chan Event
 	streamCh chan string
@@ -129,7 +133,37 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		lifecycle:         lifecycleIdle,
 	}
 	h.observer = newObserver(coordinator, store, h.emitEvent, h.emitDelta, h.emitClear)
+	if cfg.Notify.IsEnabled() {
+		h.notifier = notify.New(cfg.Notify.Command, cfg.Notify.Events)
+	}
+	// 预算哨兵订阅必须先于 Dispatcher：同一子代理边界事件上 Abort 与 FollowUp
+	// 竞争，Sentinel 先置位 Abort 后 Dispatcher 的派发自然落空，路由层不感知预算。
+	if sentinel := NewBudgetSentinel(cfg.Budget,
+		func() float64 { c, _, _, _, _ := usage.Totals(); return c },
+		func(reason string) { h.abortWithEvent(reason, "error") },
+		func(level, summary string) {
+			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: level})
+			h.notifier.Send(notify.Notification{Kind: "budget", Level: level, Title: "ainovel: 预算", Body: summary})
+		},
+	); sentinel != nil {
+		h.budget = sentinel
+		usage.SetOnCost(sentinel.OnCost)
+		h.budgetDetach = coordinator.Subscribe(sentinel.HandleEvent)
+		// 计费盲区告警：模型不报 usage 时成本恒 0，预算永不触发——保险丝没接上必须喊人。
+		usage.SetOnMissingUsage(func() {
+			const blind = "预算盲区: 模型未返回 usage 数据，成本统计为 0，预算上限不会触发（自定义模型请确认注册表价格或上游 include_usage）"
+			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: blind, Level: "warn"})
+			h.notifier.Send(notify.Notification{Kind: "budget", Level: "warn", Title: "ainovel: 预算", Body: blind})
+		})
+	}
 	h.router = flow.NewDispatcher(coordinator, store)
+	// 重复指令告警：纯 telemetry，挂机时"模型可能在原地打转"值得喊人看一眼。
+	// 事件流与 notify 成对发出——notify 只是屏内事件的离屏副本（架构 §2.3）。
+	h.router.SetOnRepeat(func(agent, task string, n int) {
+		body := fmt.Sprintf("同一指令已第 %d 次下达（%s）：%s", n, agent, task)
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "指令重复: " + body, Level: "warn"})
+		h.notifier.Send(notify.Notification{Kind: "repeat", Level: "warn", Title: "ainovel: 指令重复", Body: body})
+	})
 	h.routerDetach = h.router.Attach()
 
 	if err := store.RunMeta.Init(cfg.Style, cfg.Provider, cfg.ModelName); err != nil {
@@ -158,6 +192,9 @@ func (h *Host) StartPrepared(promptText string) error {
 	promptText = strings.TrimSpace(promptText)
 	if promptText == "" {
 		return fmt.Errorf("prompt is required")
+	}
+	if err := h.budget.Refuse(); err != nil {
+		return err
 	}
 	if err := h.store.Checkpoints.Reset(); err != nil {
 		return fmt.Errorf("reset checkpoints: %w", err)
@@ -201,6 +238,9 @@ func (h *Host) Resume() (string, error) {
 	}
 	if label == "" {
 		return "", nil // 新建模式，无恢复
+	}
+	if err := h.budget.Refuse(); err != nil {
+		return "", err
 	}
 
 	slog.Info("恢复创作", "module", "host", "label", label)
@@ -250,7 +290,10 @@ func (h *Host) Continue(text string) error {
 		h.coordinator.FollowUp(interventionMsg(text))
 		return nil
 	}
-	// 停机后 → 注入并自动恢复
+	// 停机后 → 注入并自动恢复（恢复 run 也受预算前置约束）
+	if err := h.budget.Refuse(); err != nil {
+		return err
+	}
 	h.refreshWriterRestore()
 	h.observer.setAborting(false)
 	_, err := h.coordinator.Inject(interventionMsg(text))
@@ -286,6 +329,12 @@ func (h *Host) Steer(text string) {
 
 // Abort 暂停当前 coordinator。
 func (h *Host) Abort() bool {
+	return h.abortWithEvent("用户手动暂停当前创作", "warn")
+}
+
+// abortWithEvent 以指定原因事件执行暂停。预算停机与手动暂停共用同一停机机制，
+// 仅事件文案不同（预算停机=用户预先签署的 Abort 指令，语义等同手动暂停）。
+func (h *Host) abortWithEvent(summary, level string) bool {
 	h.mu.Lock()
 	running := h.lifecycle == lifecycleRunning
 	if running {
@@ -299,7 +348,7 @@ func (h *Host) Abort() bool {
 	// 失败事件，observer 凭此标志识别为 abort 衍生噪声并抑制。
 	h.observer.setAborting(true)
 	h.coordinator.Abort()
-	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "用户手动暂停当前创作", Level: "warn"})
+	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: level})
 	return true
 }
 
@@ -315,6 +364,10 @@ func (h *Host) Close() {
 	if h.routerDetach != nil {
 		h.routerDetach()
 		h.routerDetach = nil
+	}
+	if h.budgetDetach != nil {
+		h.budgetDetach()
+		h.budgetDetach = nil
 	}
 	if h.usageCancel != nil {
 		h.usageCancel()
@@ -350,20 +403,30 @@ func (h *Host) waitDone() {
 		h.mu.Unlock()
 		slog.Info(summary, "module", "host")
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "success"})
+		h.notifier.Send(notify.Notification{
+			Kind: "run_end", Level: "info", Title: "ainovel: 创作完成",
+			Body: h.runEndBody(progress.NovelName, summary),
+		})
 	} else {
 		wasRunning := h.lifecycle == lifecycleRunning
 		if wasRunning {
 			h.lifecycle = lifecycleIdle
 		}
 		completed := 0
+		name := ""
 		if progress != nil {
 			completed = len(progress.CompletedChapters)
+			name = progress.NovelName
 		}
 		h.mu.Unlock()
 		if wasRunning {
 			summary := fmt.Sprintf("Coordinator 停止 (已完成 %d 章)", completed)
 			slog.Warn(summary, "module", "host")
 			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "warn"})
+			h.notifier.Send(notify.Notification{
+				Kind: "run_end", Level: "warn", Title: "ainovel: 创作停止",
+				Body: h.runEndBody(name, summary),
+			})
 		}
 	}
 
@@ -371,6 +434,18 @@ func (h *Host) waitDone() {
 	case h.done <- struct{}{}:
 	default:
 	}
+}
+
+// runEndBody 组装 run_end 通知正文：书名 + 进度摘要 + 累计花费。
+func (h *Host) runEndBody(novelName, summary string) string {
+	if name := strings.TrimSpace(novelName); name != "" {
+		summary = "《" + name + "》" + summary
+	}
+	cost, _, _, _, _ := h.usage.Totals()
+	if cost > 0 {
+		summary += fmt.Sprintf(" · 花费 $%.2f", cost)
+	}
+	return summary
 }
 
 // ── 通道 ──
@@ -505,6 +580,7 @@ func (h *Host) Snapshot() UISnapshot {
 		TotalCacheWriteTokens:  cacheWrite,
 		TotalCostUSD:           cost,
 		TotalSavedUSD:          saved,
+		BudgetLimitUSD:         h.budget.Limit(),
 		OverallCacheCapable:    overallCapable,
 		OverallRecentCacheRead: recentRead,
 		OverallRecentInput:     recentInput,

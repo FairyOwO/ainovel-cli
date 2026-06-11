@@ -402,6 +402,10 @@ func renderUsageSidebar(snap host.UISnapshot, width int) string {
 	if saved := formatCostUSD(snap.TotalSavedUSD); saved != "" {
 		b.WriteString(renderField("节省", saved))
 	}
+	if snap.BudgetLimitUSD > 0 {
+		pct := snap.TotalCostUSD / snap.BudgetLimitUSD * 100
+		b.WriteString(renderField("预算", fmt.Sprintf("$%.2f/$%.2f (%.0f%%)", snap.TotalCostUSD, snap.BudgetLimitUSD, pct)))
+	}
 
 	agentStats := usageStatsByCost(snap.CachePerAgent)
 	if len(agentStats) > 0 {
