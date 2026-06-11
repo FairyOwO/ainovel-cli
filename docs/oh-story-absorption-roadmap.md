@@ -127,10 +127,11 @@
 
 - Markdown 导入器：递归读取 `.md` / `.markdown`，按标题和文件名抽取摘要、结构、节奏、钩子、角色、设定、技法和禁抄项。
 - TUI 命令联动：新增 `/importbench <拆文目录> [name=benchmark_name]`，空闲状态下异步导入并在事件流反馈结果。
+- 阶段 5 最小切片：`novel_context(chapter=N)` 已根据本章大纲 / `chapter_contract` 从 compact benchmark 中生成 `reference_pack.benchmark_style`，提供 profile、matched_chapter、techniques、gaps 和 do_not_copy，不改持久化格式、不注入原文。
 
 后续仍待完成：
 
-- 阶段 5 的文风召回与匹配章节。
+- 阶段 5 的更细章节级 benchmark 元数据导入与匹配精度优化。
 - 阶段 6 的诊断报告扩展。
 
 建议文件：
@@ -172,8 +173,8 @@
 验收标准：
 
 - 无 benchmark 时静默跳过。
-- benchmark 缺 `文风.md` 时提示 warning，不阻断写作。
-- Writer prompt 明确“学技法，不抄句子、人物、桥段”。
+- benchmark 缺 `文风.md` 时通过 `benchmark_style.gaps` 提醒技法条目不足，不阻断写作。
+- Writer prompt 明确“学技法，不抄句子、人物、桥段”。（最小切片已完成）
 
 ## 阶段 6：诊断报告扩展
 
