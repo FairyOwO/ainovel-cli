@@ -504,6 +504,7 @@ func trimByBudget(result map[string]any, budget int) {
 
 	// 按优先级从低到高列出可裁剪的 key
 	trimOrder := []string{
+		"benchmark_summaries",
 		"references",
 		"voice_samples",
 		"style_anchors",

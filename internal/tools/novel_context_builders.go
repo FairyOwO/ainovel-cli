@@ -77,7 +77,6 @@ func (t *ContextTool) buildBenchmarkSummaries(result map[string]any, sectionKey 
 	benchmarks, err := t.store.Benchmark.LoadSummaries()
 	if err != nil {
 		warn("benchmark_summaries", err)
-		return
 	}
 	if len(benchmarks) == 0 {
 		return
