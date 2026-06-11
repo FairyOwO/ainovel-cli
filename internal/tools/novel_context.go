@@ -449,6 +449,7 @@ func (t *ContextTool) architectReferences() map[string]string {
 	}
 	add("outline_template", t.refs.OutlineTemplate)
 	add("character_template", t.refs.CharacterTemplate)
+	add("hook_techniques", t.refs.HookTechniques)
 	add("longform_planning", t.refs.LongformPlanning)
 	add("differentiation", t.refs.Differentiation)
 	add("reversal_toolkit", t.refs.ReversalToolkit)

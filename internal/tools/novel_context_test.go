@@ -83,6 +83,11 @@ func TestContextToolInjectsReversalToolkitReference(t *testing.T) {
 		t.Fatal("References should expose ReversalToolkit for phase 1 reference expansion")
 	}
 	field.SetString("反转工具")
+	hookField := refValue.FieldByName("HookTechniques")
+	if !hookField.IsValid() {
+		t.Fatal("References should expose HookTechniques for architect hook planning")
+	}
+	hookField.SetString("钩子技法")
 
 	tool := NewContextTool(s, refs, "default", rules.LoadOptions{})
 
@@ -129,6 +134,9 @@ func TestContextToolInjectsReversalToolkitReference(t *testing.T) {
 		}
 		if got := payload.ReferencePack.References["reversal_toolkit"]; got != "反转工具" {
 			t.Fatalf("expected architect reversal_toolkit reference, got %q", got)
+		}
+		if got := payload.ReferencePack.References["hook_techniques"]; got != "钩子技法" {
+			t.Fatalf("expected architect hook_techniques reference, got %q", got)
 		}
 	})
 }
