@@ -1,12 +1,17 @@
 package tools
 
 import (
+	"maps"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
 )
+
+var benchmarkChapterPattern = regexp.MustCompile(`(?i)(?:第\s*(\d+)\s*[章节回话]|ch(?:apter)?\s*\.?\s*(\d+))`)
 
 type contextBuildState struct {
 	chapter         int
@@ -20,6 +25,7 @@ type contextBuildState struct {
 	relationships   []domain.RelationshipEntry
 	allStateChanges []domain.StateChange
 	styleRules      *domain.WritingStyleRules
+	benchmarks      []domain.BenchmarkCompact
 }
 
 type chapterContextEnvelope struct {
@@ -91,9 +97,7 @@ func (t *ContextTool) buildBenchmarkSummaries(result map[string]any, sectionKey 
 }
 
 func mergeContextSection(result map[string]any, section map[string]any) {
-	for key, value := range section {
-		result[key] = value
-	}
+	maps.Copy(result, section)
 }
 
 // buildProgressStatus 仅在 Coordinator 调用（不传 chapter）时返回进度摘要,
@@ -311,6 +315,9 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 	styleRules, styleErr := t.store.World.LoadStyleRules()
 	warn("style_rules", styleErr)
 	state.styleRules = styleRules
+	benchmarks, benchmarkErr := t.store.Benchmark.LoadSummaries()
+	warn("benchmark_summaries", benchmarkErr)
+	state.benchmarks = benchmarks
 	state.storyThreads = t.selectStoryThreads(state)
 	if len(state.storyThreads) > 0 && len(state.storyThreads) < storyThreadRecallMinSelected {
 		state.storyThreads = nil
@@ -626,7 +633,166 @@ func (t *ContextTool) buildChapterReferencePack(envelope *chapterContextEnvelope
 		}
 	}
 
+	if style := benchmarkStyleForChapter(state); len(style) > 0 {
+		envelope.References["benchmark_style"] = style
+	}
+
 	envelope.References["references"] = t.writerReferences(state.chapter)
+}
+
+func benchmarkStyleForChapter(state contextBuildState) map[string]any {
+	if len(state.benchmarks) == 0 {
+		return nil
+	}
+	focusTerms := recallFocusTerms(state.currentEntry, state.chapterPlan)
+	best := selectBenchmarkStyle(state.benchmarks, focusTerms)
+	if best.benchmark == nil {
+		return nil
+	}
+
+	profile := benchmarkStyleProfile(*best.benchmark)
+	techniques := benchmarkStyleTechniques(*best.benchmark)
+	if profile == "" && len(techniques) == 0 {
+		return nil
+	}
+
+	gaps := benchmarkStyleGaps(*best.benchmark, best.score)
+	style := map[string]any{
+		"name":       best.benchmark.Name,
+		"profile":    profile,
+		"techniques": techniques,
+		"gaps":       gaps,
+	}
+	if best.benchmark.Title != "" {
+		style["title"] = best.benchmark.Title
+	}
+	if best.matchedChapter > 0 {
+		style["matched_chapter"] = best.matchedChapter
+	}
+	if len(best.benchmark.DoNotCopy) > 0 {
+		style["do_not_copy"] = best.benchmark.DoNotCopy
+	}
+	return style
+}
+
+type benchmarkStyleMatch struct {
+	benchmark      *domain.BenchmarkCompact
+	score          int
+	matchedChapter int
+}
+
+func selectBenchmarkStyle(benchmarks []domain.BenchmarkCompact, focusTerms []string) benchmarkStyleMatch {
+	best := benchmarkStyleMatch{}
+	for i := range benchmarks {
+		benchmark := &benchmarks[i]
+		score, matched := benchmarkStyleScore(*benchmark, focusTerms)
+		if best.benchmark == nil || score > best.score {
+			best = benchmarkStyleMatch{
+				benchmark:      benchmark,
+				score:          score,
+				matchedChapter: benchmarkMatchedChapter(matched),
+			}
+		}
+	}
+	return best
+}
+
+func benchmarkStyleScore(benchmark domain.BenchmarkCompact, focusTerms []string) (int, string) {
+	score := 0
+	matched := ""
+	add := func(items []string, weight int) {
+		for _, item := range items {
+			if !benchmarkMatchesFocus(item, focusTerms) {
+				continue
+			}
+			score += weight
+			if matched == "" {
+				matched = item
+			}
+		}
+	}
+	if benchmarkMatchesFocus(benchmark.Summary, focusTerms) {
+		score += 2
+		matched = benchmark.Summary
+	}
+	add(benchmark.Hooks, 4)
+	add(benchmark.Pacing, 3)
+	add(benchmark.ReusableTechniques, 3)
+	add(benchmark.Structure, 2)
+	add(benchmark.CharacterPatterns, 1)
+	add(benchmark.SettingPatterns, 1)
+	return score, matched
+}
+
+func benchmarkMatchesFocus(text string, focusTerms []string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	return matchesRecallTerms(text, focusTerms)
+}
+
+func benchmarkStyleProfile(benchmark domain.BenchmarkCompact) string {
+	parts := make([]string, 0, 4)
+	if benchmark.Summary != "" {
+		parts = append(parts, truncateRunes(benchmark.Summary, 80))
+	}
+	appendPart := func(label string, items []string) {
+		if len(items) > 0 {
+			parts = append(parts, label+": "+truncateRunes(items[0], 60))
+		}
+	}
+	appendPart("结构", benchmark.Structure)
+	appendPart("节奏", benchmark.Pacing)
+	appendPart("钩子", benchmark.Hooks)
+	return strings.Join(parts, "；")
+}
+
+func benchmarkStyleTechniques(benchmark domain.BenchmarkCompact) []string {
+	var techniques []string
+	for _, items := range [][]string{
+		benchmark.ReusableTechniques,
+		benchmark.Pacing,
+		benchmark.Hooks,
+		benchmark.Structure,
+	} {
+		techniques = append(techniques, items...)
+	}
+	return limitStrings(uniqueStrings(techniques), 6)
+}
+
+func benchmarkStyleGaps(benchmark domain.BenchmarkCompact, score int) []string {
+	var gaps []string
+	if len(benchmark.ReusableTechniques) == 0 {
+		gaps = append(gaps, "未导入文风/技法条目，优先参考结构、节奏和钩子。")
+	}
+	if score == 0 {
+		gaps = append(gaps, "未命中本章情绪/钩子关键词，使用整体对标风格。")
+	}
+	return gaps
+}
+
+func benchmarkMatchedChapter(text string) int {
+	match := benchmarkChapterPattern.FindStringSubmatch(text)
+	if len(match) == 0 {
+		return 0
+	}
+	for _, group := range match[1:] {
+		if group == "" {
+			continue
+		}
+		chapter, err := strconv.Atoi(group)
+		if err == nil {
+			return chapter
+		}
+	}
+	return 0
+}
+
+func limitStrings(items []string, limit int) []string {
+	if len(items) <= limit {
+		return items
+	}
+	return items[:limit]
 }
 
 func (t *ContextTool) buildArchitectContext(result map[string]any, warn func(string, error)) {

@@ -66,6 +66,117 @@ func TestContextToolInjectsCompactBenchmarkSummaries(t *testing.T) {
 	assertCompactBenchmarkSummaries(t, chapter, "working_memory")
 }
 
+func TestContextToolInjectsBenchmarkStyleForChapterFocus(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Benchmark.Save(domain.Benchmark{
+		Version:            domain.BenchmarkProfileVersion,
+		Name:               "demo-benchmark",
+		Title:              "Demo",
+		Summary:            "整体用高压危机推动主角马上行动。",
+		Structure:          []string{"第12章 误会升级后用身份反转收束"},
+		Pacing:             []string{"危机压迫下用短场景快速推进"},
+		Hooks:              []string{"第12章 章尾用身份反转制造追读"},
+		ReusableTechniques: []string{"短句推进动作，长句承接心理余波"},
+		DoNotCopy:          []string{"不复制原文句子、角色名或桥段"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{
+		Chapter:   2,
+		Title:     "身份反转",
+		CoreEvent: "主角在危机中发现同盟身份反转",
+		Hook:      "身份反转之后谁还可信",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Drafts.SaveChapterPlan(domain.ChapterPlan{
+		Chapter: 2,
+		Title:   "身份反转",
+		Goal:    "用身份反转推动主角重新选择同盟",
+		Contract: domain.ChapterContract{
+			EmotionTarget: "紧张压迫",
+			HookGoal:      "身份反转后留下信任危机",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init("test", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewContextTool(st, References{}, "default", rules.LoadOptions{})
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"chapter":2}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload struct {
+		ReferencePack struct {
+			BenchmarkStyle struct {
+				Name           string   `json:"name"`
+				Title          string   `json:"title"`
+				Profile        string   `json:"profile"`
+				MatchedChapter int      `json:"matched_chapter"`
+				Techniques     []string `json:"techniques"`
+				DoNotCopy      []string `json:"do_not_copy"`
+			} `json:"benchmark_style"`
+		} `json:"reference_pack"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	style := payload.ReferencePack.BenchmarkStyle
+	if style.Name != "demo-benchmark" || style.Title != "Demo" {
+		t.Fatalf("unexpected benchmark style identity: %+v", style)
+	}
+	if style.MatchedChapter != 12 {
+		t.Fatalf("matched_chapter = %d, want 12", style.MatchedChapter)
+	}
+	if !strings.Contains(style.Profile, "身份反转") {
+		t.Fatalf("profile should mention matched technique, got %q", style.Profile)
+	}
+	if !containsStringPart(style.Techniques, "短句推进") {
+		t.Fatalf("expected reusable technique, got %+v", style.Techniques)
+	}
+	if !containsStringPart(style.DoNotCopy, "不复制原文") {
+		t.Fatalf("expected do_not_copy guard, got %+v", style.DoNotCopy)
+	}
+}
+
+func TestContextToolOmitsBenchmarkStyleWithoutBenchmarks(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "Start", CoreEvent: "Begin"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init("test", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewContextTool(st, References{}, "default", rules.LoadOptions{})
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"chapter":1}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	pack, ok := payload["reference_pack"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reference_pack")
+	}
+	if _, exists := pack["benchmark_style"]; exists {
+		t.Fatalf("benchmark_style should be omitted without benchmarks, got %+v", pack["benchmark_style"])
+	}
+}
+
 func TestContextToolTrimsBenchmarkSummariesWhenOverBudget(t *testing.T) {
 	dir := t.TempDir()
 	st := store.NewStore(dir)
