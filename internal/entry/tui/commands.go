@@ -163,6 +163,28 @@ func commandRegistryInstance() commandRegistry {
 			},
 		},
 		{
+			Name:        "importbench",
+			Aliases:     []string{"benchmark"},
+			Group:       "writing",
+			Usage:       "/importbench <拆文目录> [name=benchmark_name]",
+			Description: "导入 Markdown 对标拆文库",
+			NeedsIdle:   true,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				m.benchSeq++
+				state, cmd, err := startBenchmarkImport(m.runtime, m.benchSeq, args, m.width, m.height)
+				if err != nil {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "导入对标拆文失败：" + err.Error(), Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				m.benchmarkImporter = state
+				m.textarea.Blur()
+				return m, cmd
+			},
+		},
+		{
 			Name:        "export",
 			Group:       "writing",
 			Usage:       "/export [path] [from=N] [to=M] [--overwrite]",

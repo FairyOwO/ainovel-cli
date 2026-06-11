@@ -71,6 +71,8 @@ func (m Model) handleOverlayKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m.handleBlockingModalKey(msg, m.handleImportKey)
 	case m.simulator != nil:
 		return m.handleBlockingModalKey(msg, m.handleSimulationKey)
+	case m.benchmarkImporter != nil:
+		return m.handleBlockingModalKey(msg, m.handleBenchmarkImportKey)
 	default:
 		return m, nil, false
 	}
@@ -507,6 +509,23 @@ func (m Model) handleRuntimeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		} else if msg.result != nil {
 			m.applyEvent(host.Event{
 				Time: time.Now(), Category: "SYSTEM", Summary: formatExportSuccess(msg.result), Level: "success",
+			})
+		}
+		m.refreshEventViewport()
+		return m, nil, true
+	case benchmarkImportDoneMsg:
+		if m.benchmarkImporter == nil || msg.reqID != m.benchmarkImporter.reqID {
+			return m, nil, true
+		}
+		boxW, _ := reportModalSize(m.width, m.height)
+		m.benchmarkImporter.finish(msg.result, msg.err, time.Now(), paddedModalContentWidth(boxW))
+		if msg.err != nil {
+			m.applyEvent(host.Event{
+				Time: time.Now(), Category: "ERROR", Summary: "导入对标拆文失败：" + msg.err.Error(), Level: "error",
+			})
+		} else {
+			m.applyEvent(host.Event{
+				Time: time.Now(), Category: "SYSTEM", Summary: formatBenchmarkImportSuccess(msg.result), Level: "success",
 			})
 		}
 		m.refreshEventViewport()
