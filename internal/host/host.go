@@ -18,6 +18,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/agents/ctxpack"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/host/bench"
 	"github.com/voocel/ainovel-cli/internal/host/exp"
 	"github.com/voocel/ainovel-cli/internal/host/flow"
 	"github.com/voocel/ainovel-cli/internal/host/imp"
@@ -50,9 +51,10 @@ type Host struct {
 	streamCh chan string
 	done     chan struct{}
 
-	mu        sync.Mutex
-	lifecycle lifecycle
-	closeOnce sync.Once
+	mu              sync.Mutex
+	lifecycle       lifecycle
+	closeOnce       sync.Once
+	maintenanceBusy bool
 }
 
 type lifecycle string
@@ -149,7 +151,7 @@ func (h *Host) Start(prompt string) error {
 // StartPrepared 使用已编排完成的启动 prompt 开始创作。
 func (h *Host) StartPrepared(promptText string) error {
 	h.mu.Lock()
-	if h.lifecycle == lifecycleRunning {
+	if h.lifecycle == lifecycleRunning || h.maintenanceBusy {
 		h.mu.Unlock()
 		return fmt.Errorf("already running")
 	}
@@ -189,7 +191,7 @@ func (h *Host) StartPrepared(promptText string) error {
 // Resume 恢复模式：从 checkpoint + progress 生成 resume prompt 并启动。
 func (h *Host) Resume() (string, error) {
 	h.mu.Lock()
-	if h.lifecycle == lifecycleRunning {
+	if h.lifecycle == lifecycleRunning || h.maintenanceBusy {
 		h.mu.Unlock()
 		return "", fmt.Errorf("already running")
 	}
@@ -242,7 +244,11 @@ func (h *Host) Continue(text string) error {
 	}
 	h.mu.Lock()
 	running := h.lifecycle == lifecycleRunning
+	busy := h.maintenanceBusy
 	h.mu.Unlock()
+	if busy {
+		return fmt.Errorf("后台任务运行中，请稍后再继续创作")
+	}
 
 	h.emitEvent(Event{Time: time.Now(), Category: "USER", Summary: "[继续] " + text, Level: "info"})
 
@@ -268,7 +274,12 @@ func (h *Host) Continue(text string) error {
 func (h *Host) Steer(text string) {
 	h.mu.Lock()
 	running := h.lifecycle == lifecycleRunning
+	busy := h.maintenanceBusy
 	h.mu.Unlock()
+	if busy {
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "后台任务运行中，请稍后再干预", Level: "warn"})
+		return
+	}
 
 	h.emitEvent(Event{Time: time.Now(), Category: "USER", Summary: "[用户干预] " + text, Level: "info"})
 
@@ -852,6 +863,27 @@ func (h *Host) ImportSimulationProfile(ctx context.Context, path string) (<-chan
 	}
 	h.mu.Unlock()
 	return sim.RunImport(ctx, h.store, path)
+}
+
+// ImportBenchmarkMarkdown 导入本地 Markdown 拆文目录为 compact benchmark 数据。
+func (h *Host) ImportBenchmarkMarkdown(ctx context.Context, opts bench.Options) (*bench.Result, error) {
+	h.mu.Lock()
+	if h.lifecycle == lifecycleRunning || h.maintenanceBusy {
+		h.mu.Unlock()
+		return nil, fmt.Errorf("coordinator 或后台任务运行中，请稍后再导入对标拆文")
+	}
+	h.maintenanceBusy = true
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		h.maintenanceBusy = false
+		h.mu.Unlock()
+	}()
+	result, err := bench.ImportMarkdown(ctx, h.store, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Export 导出已完成章节为外部文件（当前仅支持 TXT）。
