@@ -17,6 +17,7 @@ type Store struct {
 	Drafts      *DraftStore
 	Summaries   *SummaryStore
 	RunMeta     *RunMetaStore
+	Directives  *DirectivesStore
 	Signals     *SignalStore
 	Runtime     *RuntimeStore
 	Characters  *CharacterStore
@@ -42,6 +43,7 @@ func NewStore(dir string) *Store {
 		Drafts:      NewDraftStore(newIO(dir)),
 		Summaries:   NewSummaryStore(newIO(dir), outline),
 		RunMeta:     NewRunMetaStore(newIO(dir)),
+		Directives:  NewDirectivesStore(newIO(dir)),
 		Signals:     NewSignalStore(newIO(dir)),
 		Runtime:     NewRuntimeStore(newIO(dir)),
 		Characters:  NewCharacterStore(newIO(dir), outline),

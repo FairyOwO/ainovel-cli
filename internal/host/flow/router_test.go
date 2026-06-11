@@ -235,27 +235,41 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestDispatcher_Dedupe(t *testing.T) {
-	// 不需要真实 coordinator / store；dedupe 只读自己的缓存。
+func TestDispatcher_TrackRepeat(t *testing.T) {
+	// 不需要真实 coordinator / store；trackRepeat 只读自己的缓存。
 	d := &Dispatcher{}
 	inst := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "续写"}
-	if d.dedupe(inst) {
-		t.Fatal("首次 dedupe 应返回 false")
+	if got := d.trackRepeat(inst); got != 1 {
+		t.Fatalf("首次下达应计 1，got %d", got)
 	}
-	if !d.dedupe(inst) {
-		t.Fatal("同 Agent+Task 再次 dedupe 应返回 true")
+	if got := d.trackRepeat(inst); got != 2 {
+		t.Fatalf("同 Agent+Task 重复下达应计 2，got %d", got)
+	}
+	// Reason 不同、Agent+Task 相同时视为同一指令继续累计
+	sameTaskDiffReason := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "弧末后继续"}
+	if got := d.trackRepeat(sameTaskDiffReason); got != 3 {
+		t.Fatalf("仅 Reason 不同应视为重复累计到 3，got %d", got)
 	}
 	other := &Instruction{Agent: "writer", Task: "写第 6 章", Reason: "续写"}
-	if d.dedupe(other) {
-		t.Fatal("Task 变更后 dedupe 应返回 false")
+	if got := d.trackRepeat(other); got != 1 {
+		t.Fatalf("Task 变更后应重置为 1，got %d", got)
 	}
-	// Reason 不同、Agent+Task 相同时视为同一指令
-	sameTaskDiffReason := &Instruction{Agent: "writer", Task: "写第 6 章", Reason: "弧末后继续"}
-	if !d.dedupe(sameTaskDiffReason) {
-		t.Fatal("仅 Reason 不同应视为重复")
+	d.ResetRepeat()
+	if got := d.trackRepeat(other); got != 1 {
+		t.Fatalf("ResetRepeat 后首次应计 1，got %d", got)
 	}
-	d.ResetDedupe()
-	if d.dedupe(other) {
-		t.Fatal("ResetDedupe 后首次应放行")
+}
+
+func TestFormatDispatchMessage_RepeatNotice(t *testing.T) {
+	inst := &Instruction{Agent: "writer", Task: "写第 5 章", Reason: "续写"}
+	first := formatDispatchMessage(inst, 1)
+	if first != FormatMessage(inst) {
+		t.Fatalf("首次下达不应附加重复注记: %s", first)
+	}
+	third := formatDispatchMessage(inst, 3)
+	for _, want := range []string{"第 3 次下达", "路由事实未变化", "novel_context", "改派"} {
+		if !contains(third, want) {
+			t.Errorf("重复注记缺少 %q: %s", want, third)
+		}
 	}
 }

@@ -171,8 +171,8 @@ func (h *Host) StartPrepared(promptText string) error {
 	slog.Info("开始创作", "module", "host", "prompt_len", len(promptText))
 	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: "开始创作", Level: "info"})
 	h.observer.setAborting(false)
-	// 先重置去重并启用路由，再启动 Prompt，避免首轮事件先于 Enable 抵达
-	h.router.ResetDedupe()
+	// 先重置重复追踪并启用路由，再启动 Prompt，避免首轮事件先于 Enable 抵达
+	h.router.ResetRepeat()
 	h.router.Enable()
 	if err := h.coordinator.Prompt(promptText); err != nil {
 		return fmt.Errorf("prompt: %w", err)
@@ -213,7 +213,7 @@ func (h *Host) Resume() (string, error) {
 	}
 	h.refreshWriterRestore()
 	h.observer.setAborting(false)
-	h.router.ResetDedupe()
+	h.router.ResetRepeat()
 	h.router.Enable()
 	if err := h.coordinator.Prompt(prompt); err != nil {
 		return "", fmt.Errorf("resume prompt: %w", err)

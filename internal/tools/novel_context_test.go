@@ -851,3 +851,165 @@ func containsStringPart(items []string, want string) bool {
 	}
 	return false
 }
+
+func TestContextToolInjectsRewriteBriefForPendingRewriteChapter(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Progress.SetPendingRewrites([]int{2}, "节奏拖沓，需要压缩前半段"); err != nil {
+		t.Fatalf("SetPendingRewrites: %v", err)
+	}
+	if err := s.World.SaveReview(domain.ReviewEntry{
+		Chapter: 2,
+		Scope:   "chapter",
+		Verdict: "rewrite",
+		Summary: "前半段铺垫过长，冲突迟迟不出现。",
+		Issues: []domain.ConsistencyIssue{
+			{Type: "pacing", Severity: "error", Description: "前 2000 字无推进"},
+		},
+		ContractMisses: []string{"未兑现试炼开场"},
+	}); err != nil {
+		t.Fatalf("SaveReview: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, err := json.Marshal(map[string]any{"chapter": 2})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	brief, ok := payload["rewrite_brief"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected rewrite_brief in chapter context, got %T", payload["rewrite_brief"])
+	}
+	if got := brief["reason"]; got != "节奏拖沓，需要压缩前半段" {
+		t.Fatalf("expected rewrite reason, got %v", got)
+	}
+	if got, _ := brief["review_summary"].(string); !strings.Contains(got, "铺垫过长") {
+		t.Fatalf("expected review summary from chapter review, got %v", brief["review_summary"])
+	}
+	if issues, _ := brief["issues"].([]any); len(issues) == 0 {
+		t.Fatalf("expected review issues in rewrite_brief, got %v", brief["issues"])
+	}
+	if misses, _ := brief["contract_misses"].([]any); len(misses) == 0 {
+		t.Fatalf("expected contract misses in rewrite_brief, got %v", brief["contract_misses"])
+	}
+}
+
+func TestContextToolOmitsRewriteBriefForNormalChapter(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, err := json.Marshal(map[string]any{"chapter": 2})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := payload["rewrite_brief"]; ok {
+		t.Fatal("expected no rewrite_brief for chapter outside PendingRewrites")
+	}
+}
+
+func TestContextToolInjectsUserDirectivesOnBothPaths(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if _, err := s.Directives.Add(domain.UserDirective{Text: "对话占比提高", Chapter: 2, TotalChapters: 3}); err != nil {
+		t.Fatalf("AddDirective: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	for name, chapter := range map[string]int{"writer": 1, "architect": 0} {
+		args, _ := json.Marshal(map[string]any{"chapter": chapter})
+		result, err := tool.Execute(context.Background(), args)
+		if err != nil {
+			t.Fatalf("[%s] Execute: %v", name, err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(result, &payload); err != nil {
+			t.Fatalf("[%s] Unmarshal: %v", name, err)
+		}
+		working, ok := payload["working_memory"].(map[string]any)
+		if !ok {
+			t.Fatalf("[%s] missing working_memory", name)
+		}
+		directives, ok := working["user_directives"].([]any)
+		if !ok || len(directives) != 1 {
+			t.Fatalf("[%s] expected 1 directive, got %v", name, working["user_directives"])
+		}
+		entry, _ := directives[0].(map[string]any)
+		if entry["text"] != "对话占比提高" || entry["at_chapter"] != float64(2) || entry["at_total_chapters"] != float64(3) {
+			t.Errorf("[%s] unexpected directive entry: %v", name, entry)
+		}
+		if _, hasCreatedAt := entry["created_at"]; hasCreatedAt {
+			t.Errorf("[%s] created_at 是审计信息，不应进 LLM", name)
+		}
+	}
+}
+
+func TestContextToolInjectsEmptyUserDirectives(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 0})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	// 空列表也注入 []（字段稳定，同 user_rules 先例），不能是 null/缺失
+	directives, ok := working["user_directives"].([]any)
+	if !ok {
+		t.Fatalf("expected stable empty array, got %T", working["user_directives"])
+	}
+	if len(directives) != 0 {
+		t.Errorf("expected empty list, got %v", directives)
+	}
+}

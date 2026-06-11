@@ -59,15 +59,29 @@ func newArchitectContextEnvelope() architectContextEnvelope {
 }
 
 func (e chapterContextEnvelope) apply(result map[string]any) {
-	result["working_memory"] = e.Working
-	result["episodic_memory"] = e.Episodic
-	result["reference_pack"] = e.References
+	// 合并而非替换：Execute 的章节路径会先后 apply 两个信封（seed + buildChapterContext），
+	// 整体赋值会让第二次 apply 丢弃 seed 的容器内容，working_memory.* 等 canonical
+	// 路径随之失效（prompt 指针指向空气，模型只能靠顶层镜像模糊容错）。
+	mergeEnvelopeSection(result, "working_memory", e.Working)
+	mergeEnvelopeSection(result, "episodic_memory", e.Episodic)
+	mergeEnvelopeSection(result, "reference_pack", e.References)
 	if len(e.Selected) > 0 {
-		result["selected_memory"] = e.Selected
+		mergeEnvelopeSection(result, "selected_memory", e.Selected)
 	}
 	mergeContextSection(result, e.Working)
 	mergeContextSection(result, e.Episodic)
 	mergeContextSection(result, e.References)
+}
+
+// mergeEnvelopeSection 把 section 合并进 result[key] 的既有容器；容器不存在时直接挂载。
+func mergeEnvelopeSection(result map[string]any, key string, section map[string]any) {
+	if existing, ok := result[key].(map[string]any); ok {
+		for k, v := range section {
+			existing[k] = v
+		}
+		return
+	}
+	result[key] = section
 }
 
 func (e architectContextEnvelope) apply(result map[string]any) {
@@ -155,6 +169,25 @@ func (t *ContextTool) buildUserRules(result map[string]any) {
 		result["working_memory"] = working
 	}
 	working["user_rules"] = payload
+}
+
+// buildUserDirectives 把用户长效创作要求注入 working_memory.user_directives（canonical 路径）。
+//
+// 与 buildUserRules 同为单点注入：writer / editor / architect / coordinator 任一路径
+// 都拿到一致的列表。空列表也注入 []，保持字段稳定（同 user_rules 先例），
+// 也让 prompt 指针一致性测试天然可解析。条目形状见 directiveFacts。
+func (t *ContextTool) buildUserDirectives(result map[string]any, warn func(string, error)) {
+	list, err := t.store.Directives.Load()
+	if err != nil {
+		warn("user_directives", err)
+		return
+	}
+	working, ok := result["working_memory"].(map[string]any)
+	if !ok {
+		working = map[string]any{}
+		result["working_memory"] = working
+	}
+	working["user_directives"] = directiveFacts(list)
 }
 
 func (t *ContextTool) buildSimulationProfile(result map[string]any, sectionKey string, warn func(string, error)) {

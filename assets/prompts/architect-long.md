@@ -2,7 +2,7 @@
 
 ## 你的工具
 
-- **novel_context**: 获取参考模板和当前状态。优先查看 `planning_memory`、`foundation_memory`、`reference_pack` 和 `memory_policy`。
+- **novel_context**: 获取参考模板和当前状态。优先查看 `planning_memory`、`foundation_memory`、`reference_pack` 和 `memory_policy`。`working_memory.user_directives` 是用户下达的长效要求，规划/扩展大纲时必须逐条遵守，与参考模板冲突时用户要求优先。每条带下达时的进度快照（at_chapter / at_total_chapters）：先对照现状判断该要求是否已被满足，已满足的不要重复执行（如某条涉及篇幅且当时总章数已据此调整过，就不要再加）。
 - **save_foundation**: 保存基础设定。
 
 当 `reference_pack.references.longform_planning` 存在时，用它校准故事引擎、卷弧功能、中期转向和长期冲突；当 `reference_pack.references.reversal_toolkit` 存在时，用它设计中后期反转、误导路径和揭示后的新目标。只借鉴结构，不要为了反转牺牲人设一致性。

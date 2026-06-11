@@ -52,7 +52,7 @@ UI、诊断、事件日志都是从事件流 / 只读工件投影出来的被动
 
 **铁律一：工具只返事实，不返跨调度指令**。`commit_chapter` 返回 `arc_end_reached` / `next_skeleton_arc` 等结构化字段；不夹带 `[系统]` 类指令字符串。子代理内的 `next_step` 字段是事实陈述的内联指引（"我刚保存了 plan，下一步是 draft"），不算违反——见 §6.4。
 
-**铁律二：流程路由由 Flow Router 承担**。`internal/host/flow/router.go` 的 `Route(state) → *Instruction` 是纯函数，订阅 `EventToolExecEnd` 后通过 `FollowUp` 下达。返回 nil 表示"裁定场景，让 LLM 自主"。
+**铁律二：流程路由由 Flow Router 承担**。`internal/host/flow/router.go` 的 `Route(state) → *Instruction` 是纯函数，订阅 `EventToolExecEnd` 后通过 `FollowUp` 下达。返回 nil 表示"裁定场景，让 LLM 自主"。**指令通道不沉默**：Route 连续算出同一指令（说明上次派发后状态未推进）时，Dispatcher 附"第 N 次下达"事实重发而非静默吞掉——"路由结果重复"是只有 Host 能观测到的事实，沉默会让 Coordinator 落入"无指令不得行动 / StopGuard 不许停"的双重矛盾。不设阈值、不熔断，如何脱困由 LLM 裁定。
 
 **铁律三：Coordinator 不能物理 end_turn，除非 Phase=Complete**。StopGuard 在 agentcore 层拦截 `end_turn` 注入 user message；连续 5 次拦不住升级 terminate。三个子代理（architect / writer / editor）有各自的 `CheckpointDeltaGuard`。
 
@@ -381,6 +381,10 @@ Resume 用 `Prompt` 启新 Run（turn 计数重置、context 清洁），不是 
 两入口统一经 `interventionMsg` helper 加 `[用户干预]` 前缀——它是 `coordinator.md` 干预分类的锚点；曾经 Continue 发裸文本会绕过分类、被误派 writer 改已写章（已修）。
 
 `Inject` 语义：运行中插队当前 run 队列；空闲时自动恢复 run 并注入；暂停时排队等候恢复。
+
+**长效干预的持久层**：干预分类里"仅影响后续写作的长效要求"（风格/倾向类）由 Coordinator 调 `save_directive` 落盘到 `meta/user_directives.json`（上限 20 条，add 去重 / remove 按序号），`novel_context` 注入 `working_memory.user_directives`——所有子代理每章自动看到，跨压缩、跨重启生效，不依赖 Coordinator 对话记忆与派单转达。其余三类干预出路本就落 store（篇幅→compass/outline，设定→foundation，改旧章→PendingRewrites）。走信封不走 system prompt：保护 writer 跨章 system 前缀缓存。
+
+每条指令落盘时附**下达时进度快照**（at_chapter / at_total_chapters）：指令自 at_chapter 起向后生效（editor 不追溯旧章）；万一相对式指令（"增加10章"）被误存为长效要求，读取方可据快照判定已满足而非重复执行。动作式指令的正途仍是对应路由的写时翻译（architect/editor → 大纲/compass/PendingRewrites 的绝对状态），快照是误分类时的保险。
 
 ---
 

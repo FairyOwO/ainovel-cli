@@ -39,7 +39,7 @@ type Bundle struct {
 	References tools.References
 	Prompts    Prompts
 	Styles     map[string]string
-	// RulesFS 是 assets/rules 子树（包含 default.md 与 genres/）。
+	// RulesFS 是 assets/rules 子树（根目录直接包含 default.md）。
 	// 调用方传给 rules.Load 作为内置规则来源。
 	RulesFS fs.FS
 }
@@ -54,7 +54,7 @@ func Load(style string) Bundle {
 	}
 }
 
-// loadRulesFS 返回 assets/rules 的子文件系统；根目录直接包含 default.md 与 genres/。
+// loadRulesFS 返回 assets/rules 的子文件系统；根目录直接包含 default.md。
 // fs.Sub 失败时（理论不应发生）返回 nil，rules.Load 据此跳过内置来源。
 func loadRulesFS() fs.FS {
 	sub, err := fs.Sub(rulesFS, "rules")

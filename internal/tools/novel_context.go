@@ -115,6 +115,7 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 	}
 
 	t.buildUserRules(result)
+	t.buildUserDirectives(result, warn)
 
 	if len(warnings) > 0 {
 		result["_warnings"] = warnings
