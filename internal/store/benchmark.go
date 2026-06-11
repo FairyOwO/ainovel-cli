@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -59,6 +61,7 @@ func (s *BenchmarkStore) LoadAll() ([]*domain.Benchmark, error) {
 		return nil, err
 	}
 	benchmarks := make([]*domain.Benchmark, 0, len(entries))
+	var loadErrs []error
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -66,22 +69,20 @@ func (s *BenchmarkStore) LoadAll() ([]*domain.Benchmark, error) {
 		name := entry.Name()[:len(entry.Name())-len(filepath.Ext(entry.Name()))]
 		benchmark, err := s.Load(name)
 		if err != nil {
-			return nil, err
+			loadErrs = append(loadErrs, fmt.Errorf("load benchmark %s: %w", entry.Name(), err))
+			continue
 		}
 		if benchmark != nil {
 			benchmarks = append(benchmarks, benchmark)
 		}
 	}
-	return benchmarks, nil
+	return benchmarks, errors.Join(loadErrs...)
 }
 
 func (s *BenchmarkStore) LoadSummaries() ([]domain.BenchmarkCompact, error) {
 	benchmarks, err := s.LoadAll()
-	if err != nil {
+	if len(benchmarks) == 0 {
 		return nil, err
 	}
-	if len(benchmarks) == 0 {
-		return nil, nil
-	}
-	return domain.CompactBenchmarks(benchmarks), nil
+	return domain.CompactBenchmarks(benchmarks), err
 }

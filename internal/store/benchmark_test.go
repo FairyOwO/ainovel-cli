@@ -80,3 +80,26 @@ func TestBenchmarkStoreLoadAllStableOrder(t *testing.T) {
 		t.Fatalf("LoadAll order = %q, %q", benchmarks[0].Name, benchmarks[1].Name)
 	}
 }
+
+func TestBenchmarkStoreLoadAllReturnsMalformedWarnings(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Benchmark.Save(domain.Benchmark{Version: domain.BenchmarkProfileVersion, Name: "valid"}); err != nil {
+		t.Fatal(err)
+	}
+	badPath := filepath.Join(dir, "meta", "benchmarks", "bad.json")
+	if err := os.WriteFile(badPath, []byte(`{"version":"bad","name":"bad"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	benchmarks, err := st.Benchmark.LoadAll()
+	if err == nil {
+		t.Fatal("expected malformed benchmark warning")
+	}
+	if len(benchmarks) != 1 || benchmarks[0].Name != "valid" {
+		t.Fatalf("LoadAll benchmarks = %#v, want only valid benchmark", benchmarks)
+	}
+}

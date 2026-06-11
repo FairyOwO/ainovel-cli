@@ -38,7 +38,6 @@ type BenchmarkCompact struct {
 	Name               string   `json:"name"`
 	Title              string   `json:"title,omitempty"`
 	UpdatedAt          string   `json:"updated_at,omitempty"`
-	Source             string   `json:"source,omitempty"`
 	Summary            string   `json:"summary,omitempty"`
 	Structure          []string `json:"structure,omitempty"`
 	Pacing             []string `json:"pacing,omitempty"`
@@ -87,7 +86,6 @@ func CompactBenchmark(b *Benchmark) *BenchmarkCompact {
 		Name:               b.Name,
 		Title:              b.Title,
 		UpdatedAt:          b.UpdatedAt,
-		Source:             b.Source,
 		Summary:            b.Summary,
 		Structure:          compactBenchmarkItems(b.Structure),
 		Pacing:             compactBenchmarkItems(b.Pacing),
