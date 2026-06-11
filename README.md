@@ -283,6 +283,21 @@ output/novel/meta/simulation_profile.json
 
 `/importsim` 只接受本功能生成的 `simulation_profile.v1` JSON，并按语料指纹合并，重复来源会跳过。只导入可信来源的画像文件；导入内容会成为后续 Agent 的上下文参考。画像会以 compact 形式注入 `novel_context`，Coordinator、Architect、Writer、Editor 都能读取；各 Agent 只借鉴结构、节奏、钩子和吸引读者手法，不复制原文表达或专有设定。
 
+## 对标拆文库
+
+把 Markdown 拆文材料放在一个目录中，然后在 TUI 输入 `/importbench <目录>`。系统会递归读取 `.md` / `.markdown` 文件，按标题和文件名抽取摘要、结构、节奏、钩子、角色、设定、技法和禁抄项，并写入：
+
+```text
+output/novel/meta/benchmarks/{name}.json
+```
+
+```text
+/importbench ./拆文库/示例书
+/importbench ./拆文库/示例书 name=demo-book
+```
+
+导入后的 benchmark 会以 compact 形式进入 `novel_context` 的 `benchmark_summaries`，只提供方法、节奏、结构摘要和少量授权锚点，不把对标原文复制进 prompt。
+
 ## 导入
 
 在 TUI 中输入 `/import <文件路径>` 可把一本已有的小说反推导入：先按章切分，再用 LLM 反推出前提 / 角色 / 世界观 / 分层大纲 / 指南针，逐章落盘。原文作为第一卷落成可续写的连载，导入完成后会**自动接力续写**——Coordinator 在第一卷末做评审/摘要、追加新卷，从下一章继续。

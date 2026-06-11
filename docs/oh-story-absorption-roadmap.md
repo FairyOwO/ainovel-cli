@@ -19,6 +19,7 @@
 - `internal/rules/loader.go` 修复规则目录路径被误建成文件时的 conflict 暴露。
 - `novel_context(chapter=N)` 返回 `selected_memory.minimal_context`，结构化提供角色状态、因果历史、世界约束和本章意图，缺数据时保持空字段不阻断写作。
 - `save_review` 增加可选 `risk_level: S1|S2|S3|S4` 落盘与 verdict 升级：S1 自动 rewrite，S2 至少 polish，S3/S4 不单独触发 rewrite。
+- `/importbench <拆文目录> [name=...]` 支持把 Markdown 拆文库确定性导入 `meta/benchmarks/{name}.json`，并进入命令面板。
 
 ## 阶段 1：方法论资料库扩展
 
@@ -122,10 +123,15 @@
 - `novel_context` 已在 chapter / architect 路径注入 compact `benchmark_summaries`，仅保留方法、节奏、结构和少量授权锚点，不注入原始对标文本。
 - 对应持久化与注入测试已补齐。
 
+本轮已推进：
+
+- Markdown 导入器：递归读取 `.md` / `.markdown`，按标题和文件名抽取摘要、结构、节奏、钩子、角色、设定、技法和禁抄项。
+- TUI 命令联动：新增 `/importbench <拆文目录> [name=benchmark_name]`，空闲状态下异步导入并在事件流反馈结果。
+
 后续仍待完成：
 
-- Markdown 导入器。
-- TUI / UI 命令联动。
+- 阶段 5 的文风召回与匹配章节。
+- 阶段 6 的诊断报告扩展。
 
 建议文件：
 
