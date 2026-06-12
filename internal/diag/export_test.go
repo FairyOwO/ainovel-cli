@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -156,6 +157,40 @@ func TestWriteExport_WritesFile(t *testing.T) {
 	}
 	if strings.Contains(string(data), sentinel) {
 		t.Errorf("写出的文件夹带正文")
+	}
+}
+
+func TestWriteExport_PersistsDiagnosticGuidance(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	rep := Report{Findings: []Finding{{
+		Rule:       "AIFlavorHotspots",
+		Category:   CatQuality,
+		Severity:   SevWarning,
+		Confidence: ConfMedium,
+		AutoLevel:  AutoNone,
+		Target:     "prompt.writer",
+		Title:      "AI 味热点集中：cliche ×3",
+		Evidence:   `style_stats 共 3 个热点；样例: ch1:cliche="` + sentinel + `"`,
+		Suggestion: "优先按 review issue targets 做局部 spot-fix",
+	}}}
+
+	if _, err := WriteExport(s, rep, RuntimeCapture{}); err != nil {
+		t.Fatalf("WriteExport: %v", err)
+	}
+	guidance, err := s.World.LoadDiagnosticGuidance()
+	if err != nil {
+		t.Fatalf("LoadDiagnosticGuidance: %v", err)
+	}
+	if guidance == nil || guidance.SchemaVersion != domain.DiagnosticGuidanceSchemaVersion || len(guidance.Items) != 1 {
+		t.Fatalf("unexpected guidance: %+v", guidance)
+	}
+	item := guidance.Items[0]
+	if item.Rule != "AIFlavorHotspots" || item.Suggestion == "" {
+		t.Fatalf("unexpected guidance item: %+v", item)
+	}
+	if strings.Contains(item.Signal, sentinel) {
+		t.Fatalf("guidance signal leaked prose: %+v", item)
 	}
 }
 

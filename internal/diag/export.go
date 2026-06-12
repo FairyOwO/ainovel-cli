@@ -23,6 +23,9 @@ func Export(s *store.Store) (string, error) {
 // WriteExport 把已算好的 Report + RuntimeCapture 渲染落盘，不重复抓取。
 // 供 /diag 命令复用 Diagnose 的结果。
 func WriteExport(s *store.Store, rep Report, rc RuntimeCapture) (string, error) {
+	if err := s.World.SaveDiagnosticGuidance(BuildDiagnosticGuidance(rep.Findings)); err != nil {
+		return "", err
+	}
 	data := RenderExport(rep, rc)
 	abs := filepath.Join(s.Dir(), filepath.FromSlash(ExportRelPath))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
