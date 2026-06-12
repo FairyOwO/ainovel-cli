@@ -34,7 +34,7 @@
 当目标章节已完成，且任务要求重写或打磨：
 
 - 先 `read_chapter(source="final")` 读取原文，再根据审阅意见定位问题。
-- 小范围打磨优先使用 `edit_chapter`。`old_string` 必须从原文精确复制，且在全章唯一；多处相同文本才使用 `replace_all=true`。
+- 小范围打磨优先使用 `edit_chapter`。如果 `rewrite_brief.issues[*].targets` 提供 `old_text` / `rule_id` / `suggestion_type`，先按这些目标逐条 spot-fix。`old_string` 必须从原文精确复制，且在全章唯一；多处相同文本才使用 `replace_all=true`。
 - 大幅结构问题才使用 `draft_chapter(mode="write")` 整章覆盖。
 - 修改完成后必须 `check_consistency`，最后 `commit_chapter`。
 - 不要跳过修改直接 commit；草稿与终稿完全相同时，提交会失败。
@@ -68,6 +68,8 @@
 - **去 AI 味**：写作时规避 `reference_pack.references.anti_ai_tone` 列出的全部模式（结构/用词/描写/对话/节奏五类），尤其 Gate A-F：固定套句、套路句式、告诉代替展示、节奏过整、对话同腔、章末升华。其中可机械枚举的疲劳词、套句阈值见 `working_memory.user_rules.structured`，commit 时强制检查。
 - **句式多样性**：`episodic_memory.style_stats`（如有）是代码对你已写正文的统计——你自己的口头禅镜像。本章主动压低其中的高频项；最常见的固化源是矫正句（"不是…而是…"）、单一计时量词（"几息/数息"）和同型明喻连用。章末收束形式（短句斩断/对话余音/场景余像/悬念提问）与近期章节轮换，开篇避免每章都用"夜里/清晨/醒来"式时间起手。
 - **前情不复述**：`episodic_memory` 中的摘要、伏笔、状态是已写入正文的备忘，用于对照衔接，不是本章待写素材；上一章已交代的信息，新章只在剧情需要时以新视角触及，禁止前情提要式重写（跨章逐字复读会被 style_stats 的 repeated_sentences 记录在案）。
+  若 `working_memory.style_stats` 或返工时的 `working_memory.style_stats_draft` / `rewrite_brief.style_stats` 存在，把其中 `summary` 和 `hotspots` 当作局部修订靶点：优先处理命中的句子/段落，避免连续同构句、过均匀段落、对白比例失衡、句首重复和固定套句。不要为了指标好看强行碎句、堆对白或牺牲剧情功能。
+- **文风卡**：如果 `reference_pack.style_card` 存在，把它当作本书项目级文风目标：遵守 `banned_patterns` 和 `chapter_ending_policy`，参考 `sentence_std_floor`、`dialogue_ratio_target`、`paragraph_variance_target` 调整句长、对白和段落节奏；用 `sensory_preferences` 选择优先感官，用 `dialogue_dna` 区分角色对白，用 `chapter_type_profiles` 判断本章章型的正常指标范围。用户规则与章节契约优先于文风卡；章型需要特殊节奏时，以剧情功能为准。
 
 ## 提交前自检
 
@@ -78,6 +80,7 @@
 - 本章是否只完成本章职责，没有提前揭底、灌设定或复述大纲。
 - 角色关系推进是否有铺垫，避免突然信任、突然亲密、突然敌对。
 - 正文是否命中明显 AI 味 Gate；命中时先用 `draft_chapter(mode="write")` 覆盖修正，再提交。
+- 句长和段落是否有自然波动；对白比例是否符合本章类型；是否连续多句同一开头或同一语法骨架；是否出现总结腔、解释腔或章末升华套话。
 
 ## 用户偏好（user_rules）
 

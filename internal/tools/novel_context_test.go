@@ -291,6 +291,16 @@ func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 		Volume: 1,
 		Arc:    1,
 		Prose:  []string{"叙述保持克制"},
+		StyleCard: &domain.StyleCard{
+			SentenceStdFloor:        3,
+			DialogueRatioTarget:     "0.15-0.35",
+			ParagraphVarianceTarget: "短中长交错",
+			SensoryPreferences:      []string{"触觉", "声音"},
+			BannedPatterns:          []string{"章末升华"},
+			DialogueDNA:             []domain.StyleDialogueDNA{{Name: "林砚", Traits: []string{"短句"}}},
+			ChapterEndingPolicy:     "停在动作",
+			ChapterTypeProfiles:     []domain.ChapterTypeProfile{{Type: "过渡", DialogueRatioTarget: "0.1-0.25"}},
+		},
 	}); err != nil {
 		t.Fatalf("SaveStyleRules: %v", err)
 	}
@@ -340,6 +350,17 @@ func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in chapter context", key)
 		}
+	}
+	pack := payload["reference_pack"].(map[string]any)
+	styleCard, ok := pack["style_card"].(map[string]any)
+	if !ok || styleCard["dialogue_ratio_target"] != "0.15-0.35" {
+		t.Fatalf("expected style_card in reference_pack, got %v", pack["style_card"])
+	}
+	if styleCard["paragraph_variance_target"] != "短中长交错" {
+		t.Fatalf("expected full style_card fields in reference_pack, got %v", styleCard)
+	}
+	if profiles, ok := styleCard["chapter_type_profiles"].([]any); !ok || len(profiles) != 1 {
+		t.Fatalf("expected chapter_type_profiles in reference_pack, got %v", styleCard["chapter_type_profiles"])
 	}
 }
 
@@ -968,6 +989,118 @@ func TestContextToolInjectsRewriteBriefForPendingRewriteChapter(t *testing.T) {
 	}
 	if misses, _ := brief["contract_misses"].([]any); len(misses) == 0 {
 		t.Fatalf("expected contract misses in rewrite_brief, got %v", brief["contract_misses"])
+	}
+}
+
+func TestContextToolInjectsCompactStyleStats(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.World.SaveStyleStats(domain.StyleStats{
+		SchemaVersion: domain.StyleStatsSchemaVersion,
+		Chapter:       2,
+		Summary:       "句长std 1.20；对话比 0.00；热点 1 个，首要 low_dialogue_ratio",
+		Metrics: map[string]domain.StyleMetric{
+			"sentence_length_stddev":     {Value: 1.2},
+			"dialogue_ratio":             {Value: 0},
+			"sentence_start_unique_rate": {Value: 0.4},
+			"pattern_density_per_1000":   {Value: 3.5},
+			"repeated_ngram_rate":        {Value: 0.9},
+		},
+		Hotspots: []domain.StyleHotspot{
+			{ID: "hs_001", RuleID: "low_dialogue_ratio", Severity: "info", Evidence: "dialogue_ratio=0.00", Message: "对话比例偏低", SuggestionType: "check_dialogue_balance"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveStyleStats: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("missing working_memory")
+	}
+	stats, ok := working["style_stats"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing style_stats: %v", working)
+	}
+	if stats["summary"] == "" {
+		t.Fatalf("expected summary in style_stats: %v", stats)
+	}
+	metrics, ok := stats["metrics"].(map[string]any)
+	if !ok || metrics["dialogue_ratio"] != float64(0) {
+		t.Fatalf("expected compact metrics, got %v", stats["metrics"])
+	}
+	if _, hasLargeMetric := metrics["repeated_ngram_rate"]; hasLargeMetric {
+		t.Fatal("unexpected full metric table in compact style_stats")
+	}
+	hotspots, ok := stats["hotspots"].([]any)
+	if !ok || len(hotspots) != 1 {
+		t.Fatalf("expected compact hotspots, got %v", stats["hotspots"])
+	}
+	hotspot := hotspots[0].(map[string]any)
+	if hotspot["id"] != "hs_001" {
+		t.Fatalf("expected hotspot id for Editor targets, got %v", hotspot)
+	}
+}
+
+func TestContextToolInjectsDraftStyleStatsForPendingRewrite(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.Progress.SetPendingRewrites([]int{2}, "AI 腔明显"); err != nil {
+		t.Fatalf("SetPendingRewrites: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(2, "他说要走。他说要等。他说要看。她没有回答。风停了。"); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	if err := s.World.SaveStyleStats(domain.StyleStats{
+		SchemaVersion: domain.StyleStatsSchemaVersion,
+		Chapter:       2,
+		Summary:       "旧终稿统计",
+		Metrics: map[string]domain.StyleMetric{
+			"sentence_length_stddev":     {Value: 4},
+			"dialogue_ratio":             {Value: 0.2},
+			"sentence_start_unique_rate": {Value: 0.8},
+			"pattern_density_per_1000":   {Value: 1},
+		},
+	}); err != nil {
+		t.Fatalf("SaveStyleStats: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working := payload["working_memory"].(map[string]any)
+	if _, ok := working["style_stats_draft"].(map[string]any); !ok {
+		t.Fatalf("expected style_stats_draft in working_memory, got %v", working)
+	}
+	brief := payload["rewrite_brief"].(map[string]any)
+	if _, ok := brief["style_stats"].(map[string]any); !ok {
+		t.Fatalf("expected style_stats in rewrite_brief, got %v", brief)
 	}
 }
 

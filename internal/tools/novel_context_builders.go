@@ -10,6 +10,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/stylestat"
+	styleanalyzer "github.com/voocel/ainovel-cli/internal/style"
 )
 
 var benchmarkChapterPattern = regexp.MustCompile(`(?i)(?:第\s*(\d+)\s*[章节回话]|ch(?:apter)?\s*\.?\s*(\d+))`)
@@ -26,6 +27,7 @@ type contextBuildState struct {
 	relationships   []domain.RelationshipEntry
 	allStateChanges []domain.StateChange
 	styleRules      *domain.WritingStyleRules
+	styleStats      *domain.StyleStats
 	benchmarks      []domain.BenchmarkCompact
 }
 
@@ -77,9 +79,7 @@ func (e chapterContextEnvelope) apply(result map[string]any) {
 // mergeEnvelopeSection 把 section 合并进 result[key] 的既有容器；容器不存在时直接挂载。
 func mergeEnvelopeSection(result map[string]any, key string, section map[string]any) {
 	if existing, ok := result[key].(map[string]any); ok {
-		for k, v := range section {
-			existing[k] = v
-		}
+		maps.Copy(existing, section)
 		return
 	}
 	result[key] = section
@@ -286,6 +286,9 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 
 	// 是否正在重写本章：决定 novel_context 是否补"重写专用"事实。
 	isRewrite := progress != nil && slices.Contains(progress.PendingRewrites, chapter)
+	styleStats, styleStatsErr := t.store.World.LoadStyleStats(chapter)
+	warn("style_stats", styleStatsErr)
+	state.styleStats = styleStats
 
 	// 暴露 draft 是否已存在的事实：让 writer 被重派时能自行判断跳过重写还是覆盖。
 	// 只暴露 exists + word_count，不注入正文（正文让 writer 按需用 read_chapter 拉）。
@@ -303,6 +306,9 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 	// 正文不在此注入——保持"正文按需 read_chapter 拉"的约定不破。
 	if isRewrite {
 		brief := map[string]any{"reason": progress.RewriteReason}
+		if compact := compactStyleStats(styleStats); compact != nil {
+			brief["style_stats"] = compact
+		}
 		if review, reviewErr := t.store.World.LoadReview(chapter); reviewErr == nil && review != nil {
 			if review.Summary != "" {
 				brief["review_summary"] = review.Summary
@@ -333,17 +339,8 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 	allStateChanges, scErr := t.store.World.LoadStateChanges()
 	warn("recent_state_changes", scErr)
 	state.allStateChanges = allStateChanges
-	if len(allStateChanges) > 0 {
-		start := max(chapter-2, 1)
-		var recent []domain.StateChange
-		for _, c := range allStateChanges {
-			if c.Chapter >= start && c.Chapter < chapter {
-				recent = append(recent, c)
-			}
-		}
-		if len(recent) > 0 {
-			envelope.Episodic["recent_state_changes"] = recent
-		}
+	if recent := recentStateChanges(chapter, allStateChanges); len(recent) > 0 {
+		envelope.Episodic["recent_state_changes"] = recent
 	}
 
 	styleRules, styleErr := t.store.World.LoadStyleRules()
@@ -466,6 +463,15 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 		envelope.Working["checkpoint"] = checkpoint
 	}
 
+	if compact := compactStyleStats(state.styleStats); compact != nil {
+		envelope.Working["style_stats"] = compact
+	}
+	if state.progress != nil && slices.Contains(state.progress.PendingRewrites, state.chapter) {
+		if draftStats := t.compactDraftStyleStats(state.chapter, state.styleStats, warn); draftStats != nil {
+			envelope.Working["style_stats_draft"] = draftStats
+		}
+	}
+
 	if state.chapter > 1 {
 		if prevText, err := t.store.Drafts.LoadChapterText(state.chapter - 1); err == nil && prevText != "" {
 			runes := []rune(prevText)
@@ -475,6 +481,131 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 			envelope.Working["previous_tail"] = string(runes)
 		}
 	}
+}
+
+func (t *ContextTool) compactDraftStyleStats(chapter int, finalStats *domain.StyleStats, warn func(string, error)) map[string]any {
+	text, _, err := t.store.Drafts.LoadChapterContent(chapter)
+	if err != nil {
+		warn("draft_style_stats", err)
+		return nil
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	draft := styleanalyzer.AnalyzeChineseProse(text)
+	draft.Chapter = chapter
+	compact := compactStyleStats(draft)
+	if compact == nil {
+		return nil
+	}
+	if finalStats != nil {
+		compact["comparison"] = compareStyleStats(finalStats, draft)
+	}
+	return compact
+}
+
+func compactStyleStats(stats *domain.StyleStats) map[string]any {
+	if stats == nil {
+		return nil
+	}
+	out := map[string]any{
+		"schema_version": stats.SchemaVersion,
+		"chapter":        stats.Chapter,
+		"summary":        stats.Summary,
+	}
+	metrics := compactStyleMetrics(stats)
+	if len(metrics) > 0 {
+		out["metrics"] = metrics
+	}
+	hotspots := compactStyleHotspots(stats.Hotspots, 5)
+	if len(hotspots) > 0 {
+		out["hotspots"] = hotspots
+	}
+	return out
+}
+
+func compactStyleMetrics(stats *domain.StyleStats) map[string]float64 {
+	if stats == nil || len(stats.Metrics) == 0 {
+		return nil
+	}
+	keys := []string{
+		"sentence_length_stddev",
+		"paragraph_uniform_ratio",
+		"dialogue_ratio",
+		"sentence_start_unique_rate",
+		"pattern_density_per_1000",
+	}
+	out := make(map[string]float64, len(keys))
+	for _, key := range keys {
+		if metric, ok := stats.Metrics[key]; ok {
+			out[key] = metric.Value
+		}
+	}
+	return out
+}
+
+func compactStyleHotspots(hotspots []domain.StyleHotspot, limit int) []map[string]any {
+	if len(hotspots) == 0 || limit <= 0 {
+		return nil
+	}
+	ordered := slices.Clone(hotspots)
+	slices.SortStableFunc(ordered, func(a, b domain.StyleHotspot) int {
+		return styleSeverityRank(a.Severity) - styleSeverityRank(b.Severity)
+	})
+	if len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+	out := make([]map[string]any, 0, len(ordered))
+	for _, hotspot := range ordered {
+		item := map[string]any{
+			"rule_id":         hotspot.RuleID,
+			"severity":        hotspot.Severity,
+			"evidence":        hotspot.Evidence,
+			"message":         hotspot.Message,
+			"suggestion_type": hotspot.SuggestionType,
+		}
+		if hotspot.ID != "" {
+			item["id"] = hotspot.ID
+		}
+		if hotspot.ParagraphIndex > 0 {
+			item["paragraph_index"] = hotspot.ParagraphIndex
+		}
+		if hotspot.SentenceIndex > 0 {
+			item["sentence_index"] = hotspot.SentenceIndex
+		}
+		if hotspot.Span != nil {
+			item["span"] = hotspot.Span
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func styleSeverityRank(severity string) int {
+	switch severity {
+	case "critical":
+		return 0
+	case "error":
+		return 1
+	case "warning":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func compareStyleStats(finalStats, draftStats *domain.StyleStats) map[string]float64 {
+	// Keep this prompt-facing comparison smaller than the durable rewrite comparison.
+	keys := []string{"sentence_length_stddev", "dialogue_ratio", "sentence_start_unique_rate", "pattern_density_per_1000"}
+	out := make(map[string]float64, len(keys))
+	for _, key := range keys {
+		finalMetric, finalOK := finalStats.Metrics[key]
+		draftMetric, draftOK := draftStats.Metrics[key]
+		if finalOK && draftOK {
+			out[key+"_delta"] = draftMetric.Value - finalMetric.Value
+		}
+	}
+	return out
 }
 
 func (t *ContextTool) buildChapterSelectedMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {
@@ -689,6 +820,9 @@ func (t *ContextTool) buildChapterEpisodicMemory(envelope *chapterContextEnvelop
 func (t *ContextTool) buildChapterReferencePack(envelope *chapterContextEnvelope, state contextBuildState) {
 	if state.styleRules != nil {
 		envelope.References["style_rules"] = state.styleRules
+		if state.styleRules.StyleCard != nil {
+			envelope.References["style_card"] = state.styleRules.StyleCard
+		}
 	} else {
 		var maxCompleted int
 		if state.progress != nil {
@@ -1008,6 +1142,9 @@ func (t *ContextTool) buildArchitectFoundation(envelope *architectContextEnvelop
 func (t *ContextTool) buildArchitectReferences(envelope *architectContextEnvelope, warn func(string, error)) {
 	if styleRules, err := t.store.World.LoadStyleRules(); err == nil && styleRules != nil {
 		envelope.References["style_rules"] = styleRules
+		if styleRules.StyleCard != nil {
+			envelope.References["style_card"] = styleRules.StyleCard
+		}
 	} else {
 		warn("style_rules", err)
 	}
