@@ -410,9 +410,11 @@ output/novel/meta/benchmarks/{name}.json
 
 ### 去 AI 味与自定义规则
 
-内置一份去 AI 味基线（`assets/` 下，出厂默认）：机械黑名单 `rules/default.md`（套句 / 疲劳词，commit 时确定性检查）+ 语义判据 `references/anti-ai-tone.md`（注入 writer / editor 规避与举证）+ 章节级 `style_stats`（句长变化、段落均匀度、对白比例、句首重复、套话热点等确定性统计）。
+内置一份去 AI 味基线（`assets/` 下，出厂默认）：机械黑名单 `rules/default.md`（套句 / 疲劳词，commit 时确定性检查）+ 语义判据 `references/anti-ai-tone.md`（注入 writer / editor 规避与举证）+ 章节级 `style_stats`（句长变化、段落均匀度、对白比例、句首重复、句首类别、情绪标签密度、套话热点等确定性统计）。
 
-`commit_chapter` 会在提交终稿时返回并落盘 `meta/stats/chapter_N.json`。这些统计只提供证据和定位，不会直接决定 `accept` / `polish` / `rewrite`；Editor 仍必须结合原文和叙事功能判断。返工提交会额外把前后指标对比追加到 `meta/stats/rewrite_comparisons.jsonl`，供 `/diag` 判断 polish/rewrite 是否真正改善了热点。`novel_context` 会把当前章的压缩摘要和高优先级热点注入 `working_memory.style_stats`，返工时还会提供草稿与终稿的对比摘要，Writer 优先按热点做局部 `edit_chapter` spot-fix。
+`commit_chapter` 会在提交终稿时返回并落盘 `meta/stats/chapter_N.json`。这些统计只提供证据和定位，不会直接决定 `accept` / `polish` / `rewrite`；Editor 仍必须结合原文和叙事功能判断。返工提交会额外把前后指标对比、编辑距离和改动比例追加到 `meta/stats/rewrite_comparisons.jsonl`，供 `/diag` 判断 polish/rewrite 是否真正改善了热点、是否只是表层换词。`novel_context` 会把当前章的压缩摘要、高优先级热点和 `style_guidance` 注入 `working_memory`，返工时还会提供草稿与终稿的对比摘要，Writer 优先按热点做局部 `edit_chapter` spot-fix。
+
+`style_stats` 预留了 `external_detector` 字段用于未来接入外部 AI 文本检测器，但当前默认不配置、不联网、不作为硬门禁。动态 temperature 也先体现为 `style_guidance` 里的 `temperature_hint` 表达建议，含义是提高句式与段落变化，不会修改 provider 请求参数。
 
 弧级总结可以把已写章节沉淀成 `style_rules.style_card`，作为项目级文风卡注入 `reference_pack.style_card`。它记录本书的量化目标和禁忌（如句长标准差下限、对白比例目标、段落变化目标、感官偏好、角色对白 DNA、章型指标范围、章末策略、禁用套话），优先级低于用户规则和当前章节契约，高于通用去 AI 味参考。
 
