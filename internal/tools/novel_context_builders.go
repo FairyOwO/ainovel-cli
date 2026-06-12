@@ -9,8 +9,8 @@ import (
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
-	"github.com/voocel/ainovel-cli/internal/stylestat"
 	styleanalyzer "github.com/voocel/ainovel-cli/internal/style"
+	"github.com/voocel/ainovel-cli/internal/stylestat"
 )
 
 var benchmarkChapterPattern = regexp.MustCompile(`(?i)(?:第\s*(\d+)\s*[章节回话]|ch(?:apter)?\s*\.?\s*(\d+))`)
@@ -189,6 +189,29 @@ func (t *ContextTool) buildUserDirectives(result map[string]any, warn func(strin
 		result["working_memory"] = working
 	}
 	working["user_directives"] = directiveFacts(list)
+}
+
+// buildDiagnosticGuidance injects compact /diag feedback without letting diagnostics control flow.
+func (t *ContextTool) buildDiagnosticGuidance(result map[string]any, warn func(string, error)) {
+	guidance, err := t.store.World.LoadDiagnosticGuidance()
+	if err != nil {
+		warn("diag_guidance", err)
+		return
+	}
+	if guidance == nil || len(guidance.Items) == 0 {
+		return
+	}
+	working, ok := result["working_memory"].(map[string]any)
+	if !ok {
+		working = map[string]any{}
+		result["working_memory"] = working
+	}
+	working["diag_guidance"] = map[string]any{
+		"schema_version": guidance.SchemaVersion,
+		"generated_at":   guidance.GeneratedAt,
+		"items":          guidance.Items,
+		"usage":          "advisory only; use as calibration for style review and local spot-fix, not as automatic rewrite routing",
+	}
 }
 
 func (t *ContextTool) buildSimulationProfile(result map[string]any, sectionKey string, warn func(string, error)) {
@@ -409,6 +432,9 @@ func (t *ContextTool) buildStyleStats(envelope *chapterContextEnvelope, state co
 		return
 	}
 	envelope.Episodic["style_stats"] = stats
+	if guidance := styleGuidance(nil, compactBookStyleStats(stats)); len(guidance) > 0 {
+		envelope.Working["style_guidance"] = appendStringGuidance(envelope.Working["style_guidance"], guidance)
+	}
 }
 
 // styleStopwords 收集角色名与别名供短语挖掘过滤——出场人名天然高频，不是文风问题。
@@ -465,6 +491,9 @@ func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope
 
 	if compact := compactStyleStats(state.styleStats); compact != nil {
 		envelope.Working["style_stats"] = compact
+		if guidance := styleGuidance(compact, nil); len(guidance) > 0 {
+			envelope.Working["style_guidance"] = guidance
+		}
 	}
 	if state.progress != nil && slices.Contains(state.progress.PendingRewrites, state.chapter) {
 		if draftStats := t.compactDraftStyleStats(state.chapter, state.styleStats, warn); draftStats != nil {
@@ -517,6 +546,9 @@ func compactStyleStats(stats *domain.StyleStats) map[string]any {
 	if len(metrics) > 0 {
 		out["metrics"] = metrics
 	}
+	if stats.External != nil {
+		out["external_detector"] = stats.External
+	}
 	hotspots := compactStyleHotspots(stats.Hotspots, 5)
 	if len(hotspots) > 0 {
 		out["hotspots"] = hotspots
@@ -533,12 +565,115 @@ func compactStyleMetrics(stats *domain.StyleStats) map[string]float64 {
 		"paragraph_uniform_ratio",
 		"dialogue_ratio",
 		"sentence_start_unique_rate",
+		"sentence_start_dominant_category_ratio",
+		"sentence_start_abstract_connector_ratio",
+		"emotion_label_density_per_1000",
 		"pattern_density_per_1000",
 	}
 	out := make(map[string]float64, len(keys))
 	for _, key := range keys {
 		if metric, ok := stats.Metrics[key]; ok {
 			out[key] = metric.Value
+		}
+	}
+	return out
+}
+
+func compactBookStyleStats(stats *stylestat.Stats) map[string]any {
+	if stats == nil {
+		return nil
+	}
+	out := map[string]any{
+		"chapters": stats.Chapters,
+	}
+	if len(stats.Patterns) > 0 {
+		out["patterns"] = stats.Patterns
+	}
+	if len(stats.TopPhrases) > 0 {
+		out["top_phrases"] = stats.TopPhrases
+	}
+	if len(stats.RepeatedSentences) > 0 {
+		out["repeated_sentences"] = stats.RepeatedSentences
+	}
+	out["ending"] = stats.Ending
+	out["opening_time_rate"] = stats.OpeningTimeRate
+	if stats.TitleFormats != nil {
+		out["title_formats"] = stats.TitleFormats
+	}
+	if fp := compactFingerprint(stats.Fingerprint); fp != nil {
+		out["fingerprint"] = fp
+	}
+	return out
+}
+
+func compactFingerprint(fp *stylestat.Fingerprint) map[string]any {
+	if fp == nil {
+		return nil
+	}
+	out := map[string]any{
+		"recent_chapters": fp.RecentChapters,
+	}
+	if fp.BaselineChapters > 0 {
+		out["baseline_chapters"] = fp.BaselineChapters
+	}
+	if fp.FunctionWordDrift > 0 {
+		out["function_word_drift"] = fp.FunctionWordDrift
+	}
+	if fp.StartCategoryDrift > 0 {
+		out["start_category_drift"] = fp.StartCategoryDrift
+	}
+	if fp.DominantStartCategory != "" {
+		out["dominant_start_category"] = fp.DominantStartCategory
+		out["dominant_start_category_ratio"] = fp.DominantStartCategoryRatio
+	}
+	if fp.RecentEmotionLabelDensity > 0 {
+		out["recent_emotion_label_density_per_1000"] = fp.RecentEmotionLabelDensity
+	}
+	return out
+}
+
+func styleGuidance(chapterStats map[string]any, bookStats map[string]any) []string {
+	var guidance []string
+	if metrics, ok := chapterStats["metrics"].(map[string]float64); ok {
+		if metrics["emotion_label_density_per_1000"] >= 6 {
+			guidance = append(guidance, "情绪标签偏高：删掉紧张/愤怒/悲伤等标签，改用身体反应、动作和选择呈现。")
+		}
+		if metrics["sentence_start_dominant_category_ratio"] >= 0.55 {
+			guidance = append(guidance, "句首类别过于集中：下一轮刻意轮换动作、对白、感官、环境和无主语句开头。")
+		}
+		if metrics["sentence_start_abstract_connector_ratio"] >= 0.3 {
+			guidance = append(guidance, "抽象/连接词起句偏多：少用然而/与此同时/这时，直接切入动作或对白。")
+		}
+		if metrics["paragraph_uniform_ratio"] > 0.8 || metrics["sentence_length_stddev"] <= 3 {
+			guidance = append(guidance, "节奏过整：提高长短句和段落落差，temperature_hint=raise_variety。")
+		}
+	}
+	if fingerprint, ok := bookStats["fingerprint"].(map[string]any); ok {
+		if drift, ok := fingerprint["function_word_drift"].(float64); ok && drift >= 0.15 {
+			guidance = append(guidance, "近期功能词分布漂移：保持本书既有叙述口吻，避免突然换成另一种模型腔。")
+		}
+		if ratio, ok := fingerprint["dominant_start_category_ratio"].(float64); ok && ratio >= 0.5 {
+			guidance = append(guidance, "近期章句首类型固化：新章开头和段首避免继续使用主导起手方式。")
+		}
+	}
+	return guidance
+}
+
+func appendStringGuidance(existing any, extra []string) []string {
+	out := make([]string, 0, len(extra)+4)
+	switch v := existing.(type) {
+	case []string:
+		out = append(out, v...)
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	for _, item := range extra {
+		if item != "" {
+			out = append(out, item)
 		}
 	}
 	return out

@@ -1104,6 +1104,54 @@ func TestContextToolInjectsDraftStyleStatsForPendingRewrite(t *testing.T) {
 	}
 }
 
+func TestContextToolInjectsDiagnosticGuidance(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 3); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.World.SaveDiagnosticGuidance(domain.DiagnosticGuidance{
+		SchemaVersion: domain.DiagnosticGuidanceSchemaVersion,
+		GeneratedAt:   "2026-01-02T03:04:05Z",
+		Items: []domain.DiagnosticGuidanceItem{{
+			Rule:       "RewriteEffectiveness",
+			Severity:   "warning",
+			Target:     "prompt.writer",
+			Title:      "第 2 章打磨后风格指标未改善",
+			Signal:     "edit_distance_ratio=0.03",
+			Suggestion: "让 Editor issue targets 更具体",
+		}},
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticGuidance: %v", err)
+	}
+
+	tool := NewContextTool(s, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 2})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	working := payload["working_memory"].(map[string]any)
+	guidance, ok := working["diag_guidance"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing diag_guidance: %v", working)
+	}
+	items, ok := guidance["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("unexpected guidance items: %v", guidance)
+	}
+	item := items[0].(map[string]any)
+	if item["rule"] != "RewriteEffectiveness" || item["suggestion"] == "" {
+		t.Fatalf("unexpected guidance item: %v", item)
+	}
+}
+
 func TestContextToolOmitsRewriteBriefForNormalChapter(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)
