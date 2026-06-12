@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // StyleStatsSchemaVersion is the persisted schema version for chapter style statistics.
 const StyleStatsSchemaVersion = "style_stats.v1"
 
@@ -8,6 +10,81 @@ const StyleRewriteComparisonSchemaVersion = "style_rewrite_comparison.v1"
 
 // DiagnosticGuidanceSchemaVersion is the persisted schema version for compact diagnostic feedback.
 const DiagnosticGuidanceSchemaVersion = "diag_guidance.v1"
+
+const (
+	StyleMetricSentenceLengthStddev                = "sentence_length_stddev"
+	StyleMetricSentenceStartUniqueRate             = "sentence_start_unique_rate"
+	StyleMetricSentenceStartDominantCategoryRatio  = "sentence_start_dominant_category_ratio"
+	StyleMetricSentenceStartAbstractConnectorRatio = "sentence_start_abstract_connector_ratio"
+	StyleMetricParagraphLengthStddev               = "paragraph_length_stddev"
+	StyleMetricParagraphUniformRatio               = "paragraph_uniform_ratio"
+	StyleMetricPatternDensityPer1000               = "pattern_density_per_1000"
+	StyleMetricRepeatedNGramRate                   = "repeated_ngram_rate"
+	StyleMetricHomogeneousSentenceRatio            = "homogeneous_sentence_ratio"
+	StyleMetricEmotionLabelDensityPer1000          = "emotion_label_density_per_1000"
+)
+
+const (
+	StyleThresholdEmotionLabelDensity        = 6.0
+	StyleThresholdSentenceStartDominantRatio = 0.55
+	StyleThresholdAbstractConnectorRatio     = 0.3
+	StyleThresholdLowEditDistanceRatio       = 0.08
+	StyleThresholdLowSentenceStddev          = 3.0
+	StyleThresholdParagraphUniformRatio      = 0.8
+)
+
+var EmotionLabels = []string{
+	"紧张", "愤怒", "悲伤", "恐惧", "害怕", "焦虑", "绝望", "震惊", "惊讶", "痛苦", "难过", "不安", "委屈", "兴奋", "激动", "羞愧", "尴尬", "五味杂陈",
+}
+
+var FunctionWords = []string{"的", "了", "是", "在", "和", "就", "也", "都", "还", "又", "把", "被", "他", "她", "它", "我", "你", "这", "那"}
+
+// CategorizeSentenceStart classifies the first meaningful sentence token for style statistics.
+func CategorizeSentenceStart(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "“") || strings.HasPrefix(trimmed, "\"") || strings.HasPrefix(trimmed, "「") || strings.HasPrefix(trimmed, "『") {
+		return "dialogue"
+	}
+	if hasAnyPrefix(trimmed, []string{"然而", "与此同时", "此时", "这时", "可是", "但是", "随后", "于是", "后来", "终于", "忽然", "突然"}) {
+		return "abstract_connector"
+	}
+	if hasAnyPrefix(trimmed, []string{"夜里", "夜色", "清晨", "黎明", "天亮", "晨光", "黄昏", "雨里", "雨声", "门外", "窗外", "街上", "屋里", "院中"}) {
+		return "time_place"
+	}
+	first := firstNonPunctuationRune(trimmed)
+	if first == 0 {
+		return ""
+	}
+	if strings.ContainsRune("他她它我你", first) {
+		return "pronoun"
+	}
+	if strings.ContainsRune("走站坐伸抬低握推拉看看听问说笑转拿放踩奔跑躲捡撕扔", first) {
+		return "action"
+	}
+	return "other"
+}
+
+func hasAnyPrefix(text string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonPunctuationRune(text string) rune {
+	for _, r := range text {
+		if strings.ContainsRune("，、；：,.!?！？。…“”‘’「」『』", r) {
+			continue
+		}
+		return r
+	}
+	return 0
+}
 
 // StyleStats contains deterministic prose observations for one chapter.
 type StyleStats struct {
