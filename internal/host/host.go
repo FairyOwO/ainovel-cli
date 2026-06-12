@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -287,7 +288,9 @@ func (h *Host) Continue(text string) error {
 	busy := h.maintenanceBusy
 	h.mu.Unlock()
 	if busy {
-		return fmt.Errorf("后台任务运行中，请稍后再继续创作")
+		message := "后台任务运行中，请稍后再继续创作"
+		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: message, Level: "warn"})
+		return errors.New(message)
 	}
 
 	h.emitEvent(Event{Time: time.Now(), Category: "USER", Summary: "[继续] " + text, Level: "info"})
