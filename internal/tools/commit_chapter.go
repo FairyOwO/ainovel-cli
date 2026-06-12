@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -250,6 +251,7 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 	if err != nil {
 		return nil, fmt.Errorf("save style stats: %w: %w", errs.ErrStoreWrite, err)
 	}
+	t.refreshDiagnosticGuidance(a.Chapter, styleStats, nil)
 
 	pending.Stage = domain.CommitStageStateApplied
 	pending.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -429,10 +431,11 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	if err != nil {
 		return nil, fmt.Errorf("rewrite: save style stats: %w: %w", errs.ErrStoreWrite, err)
 	}
-	comparison, err := t.saveStyleRewriteComparison(chapter, mode, previousStats, styleStats)
+	comparison, err := t.saveStyleRewriteComparison(chapter, mode, existingFinal, content, previousStats, styleStats)
 	if err != nil {
 		return nil, fmt.Errorf("rewrite: save style comparison: %w: %w", errs.ErrStoreWrite, err)
 	}
+	t.refreshDiagnosticGuidance(chapter, styleStats, comparison)
 
 	// 5. 更新字数（MarkChapterComplete 对已完成章节是幂等的：replaces word count, slice.Contains 防止重复入队）
 	if err := t.store.Progress.MarkChapterComplete(chapter, wordCount, hookType, dominantStrand); err != nil {
@@ -492,18 +495,21 @@ func (t *CommitChapterTool) executeRewriteCommit(
 	})
 }
 
-func (t *CommitChapterTool) saveStyleRewriteComparison(chapter int, mode string, before, after *domain.StyleStats) (*domain.StyleRewriteComparison, error) {
+func (t *CommitChapterTool) saveStyleRewriteComparison(chapter int, mode, beforeText, afterText string, before, after *domain.StyleStats) (*domain.StyleRewriteComparison, error) {
 	if before == nil || after == nil {
 		return nil, nil
 	}
+	editDistanceRatio, changedRuneRatio := rewriteTextChange(beforeText, afterText)
 	comparison := domain.StyleRewriteComparison{
-		SchemaVersion: domain.StyleRewriteComparisonSchemaVersion,
-		Chapter:       chapter,
-		Mode:          mode,
-		ComputedAt:    time.Now().Format(time.RFC3339),
-		Before:        before,
-		After:         after,
-		Deltas:        map[string]float64{},
+		SchemaVersion:     domain.StyleRewriteComparisonSchemaVersion,
+		Chapter:           chapter,
+		Mode:              mode,
+		ComputedAt:        time.Now().Format(time.RFC3339),
+		Before:            before,
+		After:             after,
+		EditDistanceRatio: editDistanceRatio,
+		ChangedRuneRatio:  changedRuneRatio,
+		Deltas:            map[string]float64{},
 	}
 	for _, key := range styleComparisonMetricKeys() {
 		beforeMetric, beforeOK := before.Metrics[key]
@@ -529,6 +535,85 @@ func (t *CommitChapterTool) saveStyleRewriteComparison(chapter int, mode string,
 		return nil, err
 	}
 	return &comparison, nil
+}
+
+func rewriteTextChange(beforeText, afterText string) (float64, float64) {
+	beforeRunes := []rune(beforeText)
+	afterRunes := []rune(afterText)
+	maxLen := max(len(beforeRunes), len(afterRunes))
+	if maxLen == 0 {
+		return 0, 0
+	}
+	editRatio := float64(levenshteinCapped(beforeRunes, afterRunes, 2000)) / float64(maxLen)
+	changedRatio := changedRuneRatio(beforeRunes, afterRunes)
+	return round2(editRatio), round2(changedRatio)
+}
+
+func levenshteinCapped(a, b []rune, capLen int) int {
+	if len(a) > capLen || len(b) > capLen {
+		return sampledRuneDistance(a, b, capLen)
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr := make([]int, len(b)+1)
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev = curr
+	}
+	return prev[len(b)]
+}
+
+func sampledRuneDistance(a, b []rune, capLen int) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	as := sampleRunes(a, capLen)
+	bs := sampleRunes(b, capLen)
+	base := levenshteinCapped(as, bs, capLen)
+	return int(math.Round(float64(base) * float64(max(len(a), len(b))) / float64(max(len(as), len(bs)))))
+}
+
+func sampleRunes(runes []rune, limit int) []rune {
+	if len(runes) <= limit {
+		return runes
+	}
+	out := make([]rune, 0, limit)
+	step := float64(len(runes)) / float64(limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, runes[int(float64(i)*step)])
+	}
+	return out
+}
+
+func changedRuneRatio(a, b []rune) float64 {
+	maxLen := max(len(a), len(b))
+	if maxLen == 0 {
+		return 0
+	}
+	limit := min(len(a), len(b))
+	changed := maxLen - limit
+	for i := 0; i < limit; i++ {
+		if a[i] != b[i] {
+			changed++
+		}
+	}
+	return float64(changed) / float64(maxLen)
+}
+
+func round2(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 func styleComparisonMetricKeys() []string {
@@ -612,8 +697,147 @@ func (t *CommitChapterTool) buildSkipResult(chapter int, progress *domain.Progre
 			return nil, fmt.Errorf("backfill style stats: %w: %w", errs.ErrStoreWrite, err)
 		}
 	}
+	t.refreshDiagnosticGuidance(chapter, styleStats, nil)
 	violations := t.checkRules(content, wordCount)
 	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations, StyleStats: styleStats})
+}
+
+func (t *CommitChapterTool) refreshDiagnosticGuidance(chapter int, stats *domain.StyleStats, comparison *domain.StyleRewriteComparison) {
+	guidance := buildCommitDiagnosticGuidance(chapter, stats, comparison)
+	if len(guidance.Items) == 0 {
+		return
+	}
+	if err := t.store.World.SaveDiagnosticGuidance(guidance); err != nil {
+		slog.Warn("诊断回流写入失败，跳过", "module", "commit", "chapter", chapter, "err", err)
+	}
+}
+
+func buildCommitDiagnosticGuidance(chapter int, stats *domain.StyleStats, comparison *domain.StyleRewriteComparison) domain.DiagnosticGuidance {
+	guidance := domain.DiagnosticGuidance{
+		SchemaVersion: domain.DiagnosticGuidanceSchemaVersion,
+		GeneratedAt:   time.Now().Format(time.RFC3339),
+	}
+	if stats != nil {
+		if item, ok := styleHotspotGuidance(chapter, stats); ok {
+			guidance.Items = append(guidance.Items, item)
+		}
+		guidance.Items = append(guidance.Items, styleMetricGuidance(chapter, stats)...)
+	}
+	if comparison != nil {
+		if item, ok := rewriteComparisonGuidance(*comparison); ok {
+			guidance.Items = append(guidance.Items, item)
+		}
+	}
+	if len(guidance.Items) > 4 {
+		guidance.Items = guidance.Items[:4]
+	}
+	return guidance
+}
+
+func styleHotspotGuidance(chapter int, stats *domain.StyleStats) (domain.DiagnosticGuidanceItem, bool) {
+	if stats == nil || len(stats.Hotspots) == 0 {
+		return domain.DiagnosticGuidanceItem{}, false
+	}
+	counts := map[string]int{}
+	for _, hotspot := range stats.Hotspots {
+		if hotspot.RuleID != "" {
+			counts[hotspot.RuleID]++
+		}
+	}
+	if len(counts) == 0 {
+		return domain.DiagnosticGuidanceItem{}, false
+	}
+	topRule := ""
+	topCount := 0
+	for rule, count := range counts {
+		if count > topCount || (count == topCount && rule < topRule) {
+			topRule = rule
+			topCount = count
+		}
+	}
+	return domain.DiagnosticGuidanceItem{
+		Rule:       "AIFlavorHotspots",
+		Severity:   hotspotGuidanceSeverity(stats.Hotspots),
+		Target:     "prompt.writer",
+		Title:      fmt.Sprintf("第 %d 章 AI 味热点：%s ×%d", chapter, topRule, topCount),
+		Signal:     fmt.Sprintf("chapter=%d; hotspots=%d; top_rule=%s", chapter, len(stats.Hotspots), topRule),
+		Suggestion: "下一章或返工时优先按 style_stats.hotspots 定位同类句式，做局部 spot-fix，避免直接整章重写。",
+	}, true
+}
+
+func hotspotGuidanceSeverity(hotspots []domain.StyleHotspot) string {
+	for _, hotspot := range hotspots {
+		if hotspot.Severity == "error" || hotspot.Severity == "warning" {
+			return "warning"
+		}
+	}
+	return "info"
+}
+
+func styleMetricGuidance(chapter int, stats *domain.StyleStats) []domain.DiagnosticGuidanceItem {
+	if stats == nil || len(stats.Metrics) == 0 {
+		return nil
+	}
+	var items []domain.DiagnosticGuidanceItem
+	if value, ok := styleMetricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+		items = append(items, domain.DiagnosticGuidanceItem{
+			Rule:       "EmotionLabelDensity",
+			Severity:   "warning",
+			Target:     "prompt.writer",
+			Title:      fmt.Sprintf("第 %d 章情绪标签密度偏高", chapter),
+			Signal:     fmt.Sprintf("chapter=%d; emotion_label_density_per_1000=%.2f", chapter, value),
+			Suggestion: "把紧张/愤怒/悲伤等标签改成身体反应、动作选择和环境压力。",
+		})
+	}
+	if value, ok := styleMetricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+		items = append(items, domain.DiagnosticGuidanceItem{
+			Rule:       "SentenceStartDominance",
+			Severity:   "info",
+			Target:     "prompt.writer",
+			Title:      fmt.Sprintf("第 %d 章句首类别过于集中", chapter),
+			Signal:     fmt.Sprintf("chapter=%d; sentence_start_dominant_category_ratio=%.2f", chapter, value),
+			Suggestion: "后续写作轮换对白、动作、感官、环境和无主语句开头，避免固定起手方式。",
+		})
+	}
+	return items
+}
+
+func styleMetricValue(stats *domain.StyleStats, key string) (float64, bool) {
+	if stats == nil || stats.Metrics == nil {
+		return 0, false
+	}
+	metric, ok := stats.Metrics[key]
+	return metric.Value, ok
+}
+
+func rewriteComparisonGuidance(comparison domain.StyleRewriteComparison) (domain.DiagnosticGuidanceItem, bool) {
+	lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08
+	if !lowEdit && len(comparison.WorsenedMetrics) == 0 && !(len(comparison.ImprovedMetrics) == 0 && len(comparison.UnchangedMetrics) >= 3) {
+		return domain.DiagnosticGuidanceItem{}, false
+	}
+	severity := "info"
+	if lowEdit || len(comparison.WorsenedMetrics) >= 2 {
+		severity = "warning"
+	}
+	return domain.DiagnosticGuidanceItem{
+		Rule:       "RewriteEffectiveness",
+		Severity:   severity,
+		Target:     "prompt.writer",
+		Title:      fmt.Sprintf("第 %d 章%s后风格指标未明显改善", comparison.Chapter, commitRewriteModeLabel(comparison.Mode)),
+		Signal:     fmt.Sprintf("chapter=%d; mode=%s; edit_distance_ratio=%.2f; worsened=%d; unchanged=%d", comparison.Chapter, comparison.Mode, comparison.EditDistanceRatio, len(comparison.WorsenedMetrics), len(comparison.UnchangedMetrics)),
+		Suggestion: "返工应对准 style_stats.hotspots 和 review issue targets，避免只做表层换词。",
+	}, true
+}
+
+func commitRewriteModeLabel(mode string) string {
+	switch mode {
+	case "polish":
+		return "打磨"
+	case "rewrite":
+		return "重写"
+	default:
+		return "返工"
+	}
 }
 
 func (t *CommitChapterTool) loadCommittedChapterContent(chapter int) (string, int, error) {

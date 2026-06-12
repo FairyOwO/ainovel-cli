@@ -159,6 +159,13 @@ func TestCommitChapterReturnsAndPersistsStyleStats(t *testing.T) {
 	if persisted == nil || persisted.Summary != out.StyleStats.Summary {
 		t.Fatalf("persisted stats mismatch: %+v vs %+v", persisted, out.StyleStats)
 	}
+	guidance, err := s.World.LoadDiagnosticGuidance()
+	if err != nil {
+		t.Fatalf("LoadDiagnosticGuidance: %v", err)
+	}
+	if guidance == nil || !diagnosticGuidanceHasRule(guidance, "AIFlavorHotspots") {
+		t.Fatalf("expected automatic AI flavor guidance, got %+v", guidance)
+	}
 }
 
 func TestCommitChapterSkipBackfillsMissingStyleStats(t *testing.T) {
@@ -282,11 +289,30 @@ func TestCommitChapterRewriteOverwritesStyleStats(t *testing.T) {
 	if len(comparisons) != 1 || comparisons[0].Chapter != 2 || comparisons[0].Before.Summary != "旧统计" {
 		t.Fatalf("persisted rewrite comparison mismatch: %+v", comparisons)
 	}
+	guidance, err := s.World.LoadDiagnosticGuidance()
+	if err != nil {
+		t.Fatalf("LoadDiagnosticGuidance: %v", err)
+	}
+	if guidance == nil || len(guidance.Items) == 0 {
+		t.Fatalf("expected automatic rewrite guidance, got %+v", guidance)
+	}
 }
 
 func styleStatsHasRule(stats *domain.StyleStats, ruleID string) bool {
 	for _, hotspot := range stats.Hotspots {
 		if hotspot.RuleID == ruleID {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnosticGuidanceHasRule(guidance *domain.DiagnosticGuidance, rule string) bool {
+	if guidance == nil {
+		return false
+	}
+	for _, item := range guidance.Items {
+		if item.Rule == rule {
 			return true
 		}
 	}
