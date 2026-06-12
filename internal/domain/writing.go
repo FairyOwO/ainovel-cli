@@ -72,9 +72,10 @@ type OutlineFeedback struct {
 type WritingStyleRules struct {
 	Volume    int              `json:"volume"`
 	Arc       int              `json:"arc"`
-	Prose     []string         `json:"prose"`      // 3-5 条叙述风格规则，每条 ≤50 字
-	Dialogue  []CharacterVoice `json:"dialogue"`   // 角色对话风格规则
-	Taboos    []string         `json:"taboos"`     // 禁忌清单
+	Prose     []string         `json:"prose"`    // 3-5 条叙述风格规则，每条 ≤50 字
+	Dialogue  []CharacterVoice `json:"dialogue"` // 角色对话风格规则
+	Taboos    []string         `json:"taboos"`   // 禁忌清单
+	StyleCard *StyleCard       `json:"style_card,omitempty"`
 	UpdatedAt string           `json:"updated_at"` // ISO8601 时间戳
 }
 
