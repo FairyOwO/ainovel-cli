@@ -37,6 +37,12 @@ func TestLoadEmpty(t *testing.T) {
 	if v, err := s.World.LoadStyleRules(); err != nil || v != nil {
 		t.Errorf("StyleRules: want (nil, nil), got (%v, %v)", v, err)
 	}
+	if v, err := s.World.LoadStyleStats(1); err != nil || v != nil {
+		t.Errorf("StyleStats: want (nil, nil), got (%v, %v)", v, err)
+	}
+	if v, err := s.World.LoadStyleRewriteComparisons(); err != nil || v != nil {
+		t.Errorf("StyleRewriteComparisons: want (nil, nil), got (%v, %v)", v, err)
+	}
 	if v, err := s.World.LoadWorldRules(); err != nil || v != nil {
 		t.Errorf("WorldRules: want (nil, nil), got (%v, %v)", v, err)
 	}
@@ -202,12 +208,94 @@ func TestStyleRules_SaveAndLoad(t *testing.T) {
 		Prose:    []string{"短句为主"},
 		Dialogue: []domain.CharacterVoice{{Name: "张三", Rules: []string{"粗犷"}}},
 		Taboos:   []string{"不用网络用语"},
+		StyleCard: &domain.StyleCard{
+			SentenceStdFloor:        3,
+			DialogueRatioTarget:     "0.15-0.35",
+			ParagraphVarianceTarget: "短中长交错",
+			SensoryPreferences:      []string{"触觉", "嗅觉"},
+			BannedPatterns:          []string{"章末升华"},
+			DialogueDNA:             []domain.StyleDialogueDNA{{Name: "张三", Traits: []string{"短句", "少解释"}}},
+			ChapterEndingPolicy:     "落到动作",
+			ChapterTypeProfiles: []domain.ChapterTypeProfile{{
+				Type:                    "打斗",
+				SentenceStdRange:        "4-8",
+				DialogueRatioTarget:     "0.05-0.2",
+				ParagraphVarianceTarget: "短段密集",
+				Notes:                   "高潮处允许碎句",
+			}},
+		},
 	}
 	_ = s.World.SaveStyleRules(rules)
 
 	loaded, _ := s.World.LoadStyleRules()
-	if loaded == nil || loaded.Volume != 1 || len(loaded.Dialogue) != 1 {
+	if loaded == nil || loaded.Volume != 1 || len(loaded.Dialogue) != 1 || loaded.StyleCard == nil {
 		t.Errorf("roundtrip failed: %+v", loaded)
+	}
+	if loaded.StyleCard.DialogueRatioTarget != "0.15-0.35" {
+		t.Errorf("style card roundtrip failed: %+v", loaded.StyleCard)
+	}
+	if loaded.StyleCard.ParagraphVarianceTarget != "短中长交错" || len(loaded.StyleCard.SensoryPreferences) != 2 || len(loaded.StyleCard.DialogueDNA) != 1 || len(loaded.StyleCard.ChapterTypeProfiles) != 1 {
+		t.Errorf("full style card fields failed roundtrip: %+v", loaded.StyleCard)
+	}
+}
+
+func TestStyleStats_SaveLoadAndOverwrite(t *testing.T) {
+	s := newTestStore(t)
+	stats := domain.StyleStats{
+		SchemaVersion: domain.StyleStatsSchemaVersion,
+		Chapter:       2,
+		ComputedAt:    "2026-01-02T03:04:05Z",
+		Metrics: map[string]domain.StyleMetric{
+			"dialogue_ratio": {Value: 0.12},
+		},
+		Summary: "初版",
+	}
+	if err := s.World.SaveStyleStats(stats); err != nil {
+		t.Fatalf("SaveStyleStats: %v", err)
+	}
+	stats.Summary = "覆盖版"
+	stats.Metrics["dialogue_ratio"] = domain.StyleMetric{Value: 0.2}
+	if err := s.World.SaveStyleStats(stats); err != nil {
+		t.Fatalf("SaveStyleStats overwrite: %v", err)
+	}
+
+	loaded, err := s.World.LoadStyleStats(2)
+	if err != nil {
+		t.Fatalf("LoadStyleStats: %v", err)
+	}
+	if loaded == nil || loaded.Summary != "覆盖版" || loaded.Metrics["dialogue_ratio"].Value != 0.2 {
+		t.Fatalf("roundtrip failed: %+v", loaded)
+	}
+	if _, err := os.Stat(filepath.Join(s.World.io.dir, "meta", "stats", "chapter_2.json")); err != nil {
+		t.Fatalf("expected per-chapter stats file: %v", err)
+	}
+}
+
+func TestStyleRewriteComparisons_AppendAndLoad(t *testing.T) {
+	s := newTestStore(t)
+	first := domain.StyleRewriteComparison{
+		SchemaVersion:    domain.StyleRewriteComparisonSchemaVersion,
+		Chapter:          2,
+		Mode:             "polish",
+		ImprovedMetrics:  []string{"sentence_length_stddev"},
+		WorsenedMetrics:  []string{"pattern_density_per_1000"},
+		UnchangedMetrics: []string{"sentence_start_unique_rate"},
+	}
+	second := first
+	second.Mode = "rewrite"
+	second.Chapter = 3
+	if err := s.World.AppendStyleRewriteComparison(first); err != nil {
+		t.Fatalf("AppendStyleRewriteComparison first: %v", err)
+	}
+	if err := s.World.AppendStyleRewriteComparison(second); err != nil {
+		t.Fatalf("AppendStyleRewriteComparison second: %v", err)
+	}
+	loaded, err := s.World.LoadStyleRewriteComparisons()
+	if err != nil {
+		t.Fatalf("LoadStyleRewriteComparisons: %v", err)
+	}
+	if len(loaded) != 2 || loaded[0].Mode != "polish" || loaded[1].Chapter != 3 {
+		t.Fatalf("unexpected comparisons: %+v", loaded)
 	}
 }
 

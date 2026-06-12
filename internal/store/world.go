@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -272,6 +273,62 @@ func (s *WorldStore) LoadStyleRules() (*domain.WritingStyleRules, error) {
 		return nil, err
 	}
 	return &rules, nil
+}
+
+// SaveStyleStats saves deterministic style statistics for one chapter.
+func (s *WorldStore) SaveStyleStats(stats domain.StyleStats) error {
+	return s.io.WriteJSON(styleStatsPath(stats.Chapter), stats)
+}
+
+// LoadStyleStats reads deterministic style statistics for one chapter.
+func (s *WorldStore) LoadStyleStats(chapter int) (*domain.StyleStats, error) {
+	var stats domain.StyleStats
+	if err := s.io.ReadJSON(styleStatsPath(chapter), &stats); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// AppendStyleRewriteComparison appends a durable before/after style comparison for rewrite diagnostics.
+func (s *WorldStore) AppendStyleRewriteComparison(comparison domain.StyleRewriteComparison) error {
+	data, err := json.Marshal(comparison)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return s.io.AppendLine("meta/stats/rewrite_comparisons.jsonl", data)
+}
+
+// LoadStyleRewriteComparisons reads all durable rewrite style comparisons.
+func (s *WorldStore) LoadStyleRewriteComparisons() ([]domain.StyleRewriteComparison, error) {
+	data, err := s.io.ReadFile("meta/stats/rewrite_comparisons.jsonl")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	lines := strings.Split(string(data), "\n")
+	comparisons := make([]domain.StyleRewriteComparison, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var comparison domain.StyleRewriteComparison
+		if err := json.Unmarshal([]byte(line), &comparison); err != nil {
+			return nil, err
+		}
+		comparisons = append(comparisons, comparison)
+	}
+	return comparisons, nil
+}
+
+func styleStatsPath(chapter int) string {
+	return fmt.Sprintf("meta/stats/chapter_%d.json", chapter)
 }
 
 // ── 审阅 ──

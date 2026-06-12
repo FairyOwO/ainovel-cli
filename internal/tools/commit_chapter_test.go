@@ -117,6 +117,182 @@ func TestCommitChapterAllowsPendingRewrite(t *testing.T) {
 	}
 }
 
+func TestCommitChapterReturnsAndPersistsStyleStats(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	if err := s.RunMeta.Init("default", "openrouter", "test-model"); err != nil {
+		t.Fatalf("RunMeta.Init: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(1, "他说要走。他说要等。他说要看。她没有回答。风停了。"); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"chapter": 1, "summary": "摘要", "characters": []string{"主角"}, "key_events": []string{"事件"},
+	})
+	raw, err := NewCommitChapterTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var out struct {
+		StyleStats *domain.StyleStats `json:"style_stats"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.StyleStats == nil || out.StyleStats.Chapter != 1 || out.StyleStats.Model.Model != "test-model" {
+		t.Fatalf("style_stats missing or wrong: %+v", out.StyleStats)
+	}
+	if !styleStatsHasRule(out.StyleStats, "low_dialogue_ratio") {
+		t.Fatalf("expected low_dialogue_ratio hotspot, got %+v", out.StyleStats.Hotspots)
+	}
+	persisted, err := s.World.LoadStyleStats(1)
+	if err != nil {
+		t.Fatalf("LoadStyleStats: %v", err)
+	}
+	if persisted == nil || persisted.Summary != out.StyleStats.Summary {
+		t.Fatalf("persisted stats mismatch: %+v vs %+v", persisted, out.StyleStats)
+	}
+}
+
+func TestCommitChapterSkipBackfillsMissingStyleStats(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	content := "他说要走。他说要等。他说要看。她没有回答。风停了。"
+	if err := s.Drafts.SaveDraft(1, content); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	if err := s.Drafts.SaveFinalChapter(1, content); err != nil {
+		t.Fatalf("SaveFinalChapter: %v", err)
+	}
+	if err := s.Progress.MarkChapterComplete(1, len([]rune(content)), "mystery", "quest"); err != nil {
+		t.Fatalf("MarkChapterComplete: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"chapter": 1, "summary": "摘要", "characters": []string{"主角"}, "key_events": []string{"事件"},
+	})
+	raw, err := NewCommitChapterTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var out struct {
+		StyleStats *domain.StyleStats `json:"style_stats"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.StyleStats == nil || out.StyleStats.Chapter != 1 {
+		t.Fatalf("expected backfilled style stats, got %+v", out.StyleStats)
+	}
+	persisted, err := s.World.LoadStyleStats(1)
+	if err != nil {
+		t.Fatalf("LoadStyleStats: %v", err)
+	}
+	if persisted == nil || persisted.Summary != out.StyleStats.Summary {
+		t.Fatalf("persisted backfill mismatch: %+v vs %+v", persisted, out.StyleStats)
+	}
+}
+
+func TestCommitChapterRewriteOverwritesStyleStats(t *testing.T) {
+	dir := t.TempDir()
+	s := store.NewStore(dir)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 10); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+	original := "这一刻，仿佛一切都有了答案。命运落下。"
+	if err := s.Drafts.SaveDraft(2, original); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	if err := s.Drafts.SaveFinalChapter(2, original); err != nil {
+		t.Fatalf("SaveFinalChapter: %v", err)
+	}
+	if err := s.World.SaveStyleStats(domain.StyleStats{
+		SchemaVersion: domain.StyleStatsSchemaVersion,
+		Chapter:       2,
+		Summary:       "旧统计",
+		Metrics: map[string]domain.StyleMetric{
+			"sentence_length_stddev":     {Value: 1.0},
+			"sentence_start_unique_rate": {Value: 0.2},
+			"pattern_density_per_1000":   {Value: 5.0},
+		},
+	}); err != nil {
+		t.Fatalf("SaveStyleStats: %v", err)
+	}
+	if err := s.Progress.MarkChapterComplete(2, len([]rune(original)), "mystery", "quest"); err != nil {
+		t.Fatalf("MarkChapterComplete: %v", err)
+	}
+	if err := s.Progress.SetPendingRewrites([]int{2}, "测试重写"); err != nil {
+		t.Fatalf("SetPendingRewrites: %v", err)
+	}
+	if err := s.Progress.SetFlow(domain.FlowRewriting); err != nil {
+		t.Fatalf("SetFlow: %v", err)
+	}
+	polished := "雨落在窗纸上。林墨抬头。\"我会去。\"她把灯芯拨亮。"
+	if err := s.Drafts.SaveDraft(2, polished); err != nil {
+		t.Fatalf("SaveDraft polished: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"chapter": 2, "summary": "重写", "characters": []string{"主角"}, "key_events": []string{"完成"},
+	})
+	raw, err := NewCommitChapterTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var out struct {
+		StyleStats      *domain.StyleStats             `json:"style_stats"`
+		StyleComparison *domain.StyleRewriteComparison `json:"style_rewrite_comparison"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.StyleStats == nil || out.StyleStats.Summary == "旧统计" {
+		t.Fatalf("rewrite style_stats missing or stale: %+v", out.StyleStats)
+	}
+	if out.StyleComparison == nil || out.StyleComparison.Chapter != 2 || out.StyleComparison.Mode != "rewrite" {
+		t.Fatalf("rewrite style comparison missing: %+v", out.StyleComparison)
+	}
+	persisted, err := s.World.LoadStyleStats(2)
+	if err != nil {
+		t.Fatalf("LoadStyleStats: %v", err)
+	}
+	if persisted == nil || persisted.Summary != out.StyleStats.Summary {
+		t.Fatalf("persisted rewrite stats mismatch: %+v vs %+v", persisted, out.StyleStats)
+	}
+	comparisons, err := s.World.LoadStyleRewriteComparisons()
+	if err != nil {
+		t.Fatalf("LoadStyleRewriteComparisons: %v", err)
+	}
+	if len(comparisons) != 1 || comparisons[0].Chapter != 2 || comparisons[0].Before.Summary != "旧统计" {
+		t.Fatalf("persisted rewrite comparison mismatch: %+v", comparisons)
+	}
+}
+
+func styleStatsHasRule(stats *domain.StyleStats, ruleID string) bool {
+	for _, hotspot := range stats.Hotspots {
+		if hotspot.RuleID == ruleID {
+			return true
+		}
+	}
+	return false
+}
+
 // TestCommitChapterUpdatesCastLedger 验证：commit_chapter 把本章 characters 累加进 cast_ledger，
 // cast_intros 提供的 brief_role 被采用，且 characters.json 中的核心角色不进入 ledger。
 func TestCommitChapterUpdatesCastLedger(t *testing.T) {

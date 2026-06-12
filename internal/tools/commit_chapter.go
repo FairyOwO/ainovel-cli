@@ -14,6 +14,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/store"
+	styleanalyzer "github.com/voocel/ainovel-cli/internal/style"
 )
 
 // CommitChapterTool 提交章节：加载正文 → 保存终稿 → 生成摘要 → 更新状态 → 更新进度。
@@ -37,7 +38,8 @@ func (t *CommitChapterTool) WithRules(opts rules.LoadOptions) *CommitChapterTool
 // 由于嵌入字段会被 JSON marshaler 提升（promoted），序列化结果等同于扁平结构。
 type commitOutput struct {
 	domain.CommitResult
-	RuleViolations []rules.Violation `json:"rule_violations,omitempty"`
+	RuleViolations []rules.Violation  `json:"rule_violations,omitempty"`
+	StyleStats     *domain.StyleStats `json:"style_stats,omitempty"`
 }
 
 func (t *CommitChapterTool) Name() string { return "commit_chapter" }
@@ -241,6 +243,14 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		}
 	}
 
+	// 4c. 机械规则检查与自然度统计（仅返事实，不阻断 flow / verdict）。
+	// style_stats 必须在 Progress 标记完成前落盘：否则写入失败会造成章节已完成但统计缺失，重试只能走 skip path。
+	violations := t.checkRules(content, wordCount)
+	styleStats, err := t.analyzeAndSaveStyleStats(a.Chapter, content)
+	if err != nil {
+		return nil, fmt.Errorf("save style stats: %w: %w", errs.ErrStoreWrite, err)
+	}
+
 	pending.Stage = domain.CommitStageStateApplied
 	pending.UpdatedAt = time.Now().Format(time.RFC3339)
 	if err := t.store.Signals.SavePendingCommit(pending); err != nil {
@@ -337,9 +347,7 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("checkpoint commit: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 11. 机械规则检查（仅返事实，不阻断）
-	violations := t.checkRules(content, wordCount)
-	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations})
+	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations, StyleStats: styleStats})
 }
 
 // checkRules 对章节正文做机械检查：内置产品底线 Lint（机制残留，始终执行）
@@ -348,6 +356,18 @@ func (t *CommitChapterTool) checkRules(text string, wordCount int) []rules.Viola
 	violations := rules.Lint(text)
 	bundle := rules.Merge(rules.Load(t.rulesOpts))
 	return append(violations, rules.Check(text, wordCount, bundle.Structured)...)
+}
+
+func (t *CommitChapterTool) analyzeAndSaveStyleStats(chapter int, text string) (*domain.StyleStats, error) {
+	stats := styleanalyzer.AnalyzeChineseProse(text)
+	stats.Chapter = chapter
+	if meta, err := t.store.RunMeta.Load(); err == nil && meta != nil {
+		stats.Model = domain.StyleModelInfo{Provider: meta.Provider, Model: meta.Model}
+	}
+	if err := t.store.World.SaveStyleStats(*stats); err != nil {
+		return nil, err
+	}
+	return stats, nil
 }
 
 // executeRewriteCommit 处理打磨/重写章节的提交：覆盖终稿与摘要、更新字数、drain 队列。
@@ -380,6 +400,7 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		return nil, fmt.Errorf("第 %d 章 drafts 与 chapters 内容完全相同，未检测到%s改动。请先调 draft_chapter(mode=write, chapter=%d) 写入%s后的新正文，再 commit_chapter: %w",
 			chapter, mode, chapter, mode, errs.ErrToolPrecondition)
 	}
+	previousStats, _ := t.store.World.LoadStyleStats(chapter)
 
 	// 3. 覆盖终稿
 	if err := t.store.Drafts.SaveFinalChapter(chapter, content); err != nil {
@@ -396,17 +417,34 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		return nil, fmt.Errorf("rewrite: save summary: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 4. 更新字数（MarkChapterComplete 对已完成章节是幂等的：replaces word count, slice.Contains 防止重复入队）
+	mode := "rewrite"
+	if progress.Flow == domain.FlowPolishing {
+		mode = "polish"
+	}
+
+	// 4. 同主路径：rewrite/polish 也做机械检查与自然度统计。
+	// 统计和对比必须先于队列 drain，避免返回错误后队列已清、后续无法补齐诊断事实。
+	violations := t.checkRules(content, wordCount)
+	styleStats, err := t.analyzeAndSaveStyleStats(chapter, content)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite: save style stats: %w: %w", errs.ErrStoreWrite, err)
+	}
+	comparison, err := t.saveStyleRewriteComparison(chapter, mode, previousStats, styleStats)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite: save style comparison: %w: %w", errs.ErrStoreWrite, err)
+	}
+
+	// 5. 更新字数（MarkChapterComplete 对已完成章节是幂等的：replaces word count, slice.Contains 防止重复入队）
 	if err := t.store.Progress.MarkChapterComplete(chapter, wordCount, hookType, dominantStrand); err != nil {
 		return nil, fmt.Errorf("rewrite: update word count: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 5. Drain 待处理队列；队列空时 CompleteRewrite 会自动把 flow 切回 writing
+	// 6. Drain 待处理队列；队列空时 CompleteRewrite 会自动把 flow 切回 writing
 	if err := t.store.Progress.CompleteRewrite(chapter); err != nil {
 		return nil, fmt.Errorf("rewrite: complete rewrite: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 6. Checkpoint
+	// 7. Checkpoint
 	if _, err := t.store.Checkpoints.AppendArtifact(
 		domain.ChapterScope(chapter), "commit",
 		fmt.Sprintf("chapters/%02d.md", chapter),
@@ -414,11 +452,7 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		return nil, fmt.Errorf("rewrite: checkpoint commit: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 7. 读取 drain 后的 Progress 快照，作为事实返回
-	mode := "rewrite"
-	if progress.Flow == domain.FlowPolishing {
-		mode = "polish"
-	}
+	// 8. 读取 drain 后的 Progress 快照，作为事实返回
 	latest, _ := t.store.Progress.Load()
 	remaining := []int{}
 	nextChapter := chapter + 1
@@ -442,26 +476,101 @@ func (t *CommitChapterTool) executeRewriteCommit(
 		}
 	}
 
-	// 同主路径：rewrite/polish 也做机械检查并附 rule_violations
-	violations := t.checkRules(content, wordCount)
 	return json.Marshal(map[string]any{
-		"chapter":         chapter,
-		"rewritten":       true,
-		"mode":            mode,
-		"word_count":      wordCount,
-		"remaining_queue": remaining,
-		"queue_drained":   drained,
-		"next_chapter":    nextChapter,
-		"flow":            flow,
-		"book_complete":   bookComplete,
-		"rule_violations": violations,
+		"chapter":                  chapter,
+		"rewritten":                true,
+		"mode":                     mode,
+		"word_count":               wordCount,
+		"remaining_queue":          remaining,
+		"queue_drained":            drained,
+		"next_chapter":             nextChapter,
+		"flow":                     flow,
+		"book_complete":            bookComplete,
+		"rule_violations":          violations,
+		"style_stats":              styleStats,
+		"style_rewrite_comparison": comparison,
 	})
+}
+
+func (t *CommitChapterTool) saveStyleRewriteComparison(chapter int, mode string, before, after *domain.StyleStats) (*domain.StyleRewriteComparison, error) {
+	if before == nil || after == nil {
+		return nil, nil
+	}
+	comparison := domain.StyleRewriteComparison{
+		SchemaVersion: domain.StyleRewriteComparisonSchemaVersion,
+		Chapter:       chapter,
+		Mode:          mode,
+		ComputedAt:    time.Now().Format(time.RFC3339),
+		Before:        before,
+		After:         after,
+		Deltas:        map[string]float64{},
+	}
+	for _, key := range styleComparisonMetricKeys() {
+		beforeMetric, beforeOK := before.Metrics[key]
+		afterMetric, afterOK := after.Metrics[key]
+		if !beforeOK || !afterOK {
+			continue
+		}
+		delta := afterMetric.Value - beforeMetric.Value
+		comparison.Deltas[key+"_delta"] = delta
+		switch classifyStyleMetricDelta(key, delta) {
+		case "improved":
+			comparison.ImprovedMetrics = append(comparison.ImprovedMetrics, key)
+		case "worsened":
+			comparison.WorsenedMetrics = append(comparison.WorsenedMetrics, key)
+		case "unchanged":
+			comparison.UnchangedMetrics = append(comparison.UnchangedMetrics, key)
+		}
+	}
+	if len(comparison.Deltas) == 0 {
+		comparison.Deltas = nil
+	}
+	if err := t.store.World.AppendStyleRewriteComparison(comparison); err != nil {
+		return nil, err
+	}
+	return &comparison, nil
+}
+
+func styleComparisonMetricKeys() []string {
+	return []string{
+		"sentence_length_stddev",
+		"sentence_start_unique_rate",
+		"paragraph_length_stddev",
+		"paragraph_uniform_ratio",
+		"pattern_density_per_1000",
+		"repeated_ngram_rate",
+		"homogeneous_sentence_ratio",
+	}
+}
+
+func classifyStyleMetricDelta(key string, delta float64) string {
+	const epsilon = 0.01
+	if delta > -epsilon && delta < epsilon {
+		return "unchanged"
+	}
+	switch key {
+	case "sentence_length_stddev", "sentence_start_unique_rate", "paragraph_length_stddev":
+		if delta > 0 {
+			return "improved"
+		}
+		return "worsened"
+	case "paragraph_uniform_ratio", "pattern_density_per_1000", "repeated_ngram_rate", "homogeneous_sentence_ratio":
+		if delta < 0 {
+			return "improved"
+		}
+		return "worsened"
+	default:
+		return "unchanged"
+	}
 }
 
 // buildSkipResult 为"章节已完成的重复提交"构造与正常 commit 对齐的事实返回。
 // 协调者据此做后续决策（writer/editor/architect 派发），而不会因为拿到 prose 提示而幻觉。
 func (t *CommitChapterTool) buildSkipResult(chapter int, progress *domain.Progress) (json.RawMessage, error) {
-	_, wordCount, _ := t.store.Drafts.LoadChapterContent(chapter)
+	content, wordCount, err := t.loadCommittedChapterContent(chapter)
+	if err != nil {
+		return nil, fmt.Errorf("load committed chapter content: %w: %w", errs.ErrStoreRead, err)
+	}
 
 	result := domain.CommitResult{
 		Chapter:     chapter,
@@ -493,7 +602,29 @@ func (t *CommitChapterTool) buildSkipResult(chapter int, progress *domain.Progre
 		result.Flow = string(progress.Flow)
 	}
 
-	return json.Marshal(result)
+	styleStats, err := t.store.World.LoadStyleStats(chapter)
+	if err != nil {
+		return nil, fmt.Errorf("load style stats: %w: %w", errs.ErrStoreRead, err)
+	}
+	if styleStats == nil && content != "" {
+		styleStats, err = t.analyzeAndSaveStyleStats(chapter, content)
+		if err != nil {
+			return nil, fmt.Errorf("backfill style stats: %w: %w", errs.ErrStoreWrite, err)
+		}
+	}
+	violations := t.checkRules(content, wordCount)
+	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations, StyleStats: styleStats})
+}
+
+func (t *CommitChapterTool) loadCommittedChapterContent(chapter int) (string, int, error) {
+	content, err := t.store.Drafts.LoadChapterText(chapter)
+	if err != nil {
+		return "", 0, err
+	}
+	if content != "" {
+		return content, len([]rune(content)), nil
+	}
+	return t.store.Drafts.LoadChapterContent(chapter)
 }
 
 // loadCoreCharacterNameSet 加载 characters.json 中已有的角色名集合（含别名）。
