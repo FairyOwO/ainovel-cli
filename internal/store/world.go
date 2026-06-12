@@ -327,6 +327,23 @@ func (s *WorldStore) LoadStyleRewriteComparisons() ([]domain.StyleRewriteCompari
 	return comparisons, nil
 }
 
+// SaveDiagnosticGuidance overwrites compact /diag feedback for future agent context.
+func (s *WorldStore) SaveDiagnosticGuidance(guidance domain.DiagnosticGuidance) error {
+	return s.io.WriteJSON("meta/diag-guidance.json", guidance)
+}
+
+// LoadDiagnosticGuidance reads compact /diag feedback for future agent context.
+func (s *WorldStore) LoadDiagnosticGuidance() (*domain.DiagnosticGuidance, error) {
+	var guidance domain.DiagnosticGuidance
+	if err := s.io.ReadJSON("meta/diag-guidance.json", &guidance); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &guidance, nil
+}
+
 func styleStatsPath(chapter int) string {
 	return fmt.Sprintf("meta/stats/chapter_%d.json", chapter)
 }

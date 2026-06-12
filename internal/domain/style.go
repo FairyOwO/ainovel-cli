@@ -6,6 +6,9 @@ const StyleStatsSchemaVersion = "style_stats.v1"
 // StyleRewriteComparisonSchemaVersion is the persisted schema version for rewrite comparisons.
 const StyleRewriteComparisonSchemaVersion = "style_rewrite_comparison.v1"
 
+// DiagnosticGuidanceSchemaVersion is the persisted schema version for compact diagnostic feedback.
+const DiagnosticGuidanceSchemaVersion = "diag_guidance.v1"
+
 // StyleStats contains deterministic prose observations for one chapter.
 type StyleStats struct {
 	SchemaVersion  string                 `json:"schema_version"`
@@ -13,9 +16,20 @@ type StyleStats struct {
 	ComputedAt     string                 `json:"computed_at"`
 	RulesetVersion string                 `json:"ruleset_version,omitempty"`
 	Model          StyleModelInfo         `json:"model"`
+	External       *ExternalDetectorScore `json:"external_detector,omitempty"`
 	Metrics        map[string]StyleMetric `json:"metrics"`
 	Hotspots       []StyleHotspot         `json:"hotspots,omitempty"`
 	Summary        string                 `json:"summary"`
+}
+
+// ExternalDetectorScore is an optional AI-text detector observation.
+type ExternalDetectorScore struct {
+	Provider   string  `json:"provider,omitempty"`
+	Score      float64 `json:"score,omitempty"`
+	Label      string  `json:"label,omitempty"`
+	Status     string  `json:"status,omitempty"`
+	CheckedAt  string  `json:"checked_at,omitempty"`
+	Confidence string  `json:"confidence,omitempty"`
 }
 
 // StyleModelInfo records the model active when the prose was committed.
@@ -79,14 +93,33 @@ type ChapterTypeProfile struct {
 
 // StyleRewriteComparison preserves before/after style observations for one rewrite or polish commit.
 type StyleRewriteComparison struct {
-	SchemaVersion    string             `json:"schema_version"`
-	Chapter          int                `json:"chapter"`
-	Mode             string             `json:"mode"`
-	ComputedAt       string             `json:"computed_at"`
-	Before           *StyleStats        `json:"before,omitempty"`
-	After            *StyleStats        `json:"after,omitempty"`
-	Deltas           map[string]float64 `json:"deltas,omitempty"`
-	ImprovedMetrics  []string           `json:"improved_metrics,omitempty"`
-	WorsenedMetrics  []string           `json:"worsened_metrics,omitempty"`
-	UnchangedMetrics []string           `json:"unchanged_metrics,omitempty"`
+	SchemaVersion     string             `json:"schema_version"`
+	Chapter           int                `json:"chapter"`
+	Mode              string             `json:"mode"`
+	ComputedAt        string             `json:"computed_at"`
+	Before            *StyleStats        `json:"before,omitempty"`
+	After             *StyleStats        `json:"after,omitempty"`
+	EditDistanceRatio float64            `json:"edit_distance_ratio,omitempty"`
+	ChangedRuneRatio  float64            `json:"changed_rune_ratio,omitempty"`
+	Deltas            map[string]float64 `json:"deltas,omitempty"`
+	ImprovedMetrics   []string           `json:"improved_metrics,omitempty"`
+	WorsenedMetrics   []string           `json:"worsened_metrics,omitempty"`
+	UnchangedMetrics  []string           `json:"unchanged_metrics,omitempty"`
+}
+
+// DiagnosticGuidance is compact, non-prose feedback from /diag for future agent context.
+type DiagnosticGuidance struct {
+	SchemaVersion string                   `json:"schema_version"`
+	GeneratedAt   string                   `json:"generated_at"`
+	Items         []DiagnosticGuidanceItem `json:"items,omitempty"`
+}
+
+// DiagnosticGuidanceItem is an agent-facing instruction distilled from one diagnostic finding.
+type DiagnosticGuidanceItem struct {
+	Rule       string `json:"rule"`
+	Severity   string `json:"severity"`
+	Target     string `json:"target"`
+	Title      string `json:"title"`
+	Signal     string `json:"signal,omitempty"`
+	Suggestion string `json:"suggestion"`
 }

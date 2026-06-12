@@ -299,6 +299,40 @@ func TestStyleRewriteComparisons_AppendAndLoad(t *testing.T) {
 	}
 }
 
+func TestDiagnosticGuidance_SaveLoadAndOverwrite(t *testing.T) {
+	s := newTestStore(t)
+	guidance := domain.DiagnosticGuidance{
+		SchemaVersion: domain.DiagnosticGuidanceSchemaVersion,
+		GeneratedAt:   "2026-01-02T03:04:05Z",
+		Items: []domain.DiagnosticGuidanceItem{{
+			Rule:       "AIFlavorHotspots",
+			Severity:   "warning",
+			Target:     "prompt.writer",
+			Title:      "AI 味热点集中",
+			Signal:     "style_stats 共 5 个热点",
+			Suggestion: "优先局部 spot-fix",
+		}},
+	}
+	if err := s.World.SaveDiagnosticGuidance(guidance); err != nil {
+		t.Fatalf("SaveDiagnosticGuidance: %v", err)
+	}
+	guidance.Items[0].Title = "覆盖后的诊断"
+	if err := s.World.SaveDiagnosticGuidance(guidance); err != nil {
+		t.Fatalf("SaveDiagnosticGuidance overwrite: %v", err)
+	}
+
+	loaded, err := s.World.LoadDiagnosticGuidance()
+	if err != nil {
+		t.Fatalf("LoadDiagnosticGuidance: %v", err)
+	}
+	if loaded == nil || len(loaded.Items) != 1 || loaded.Items[0].Title != "覆盖后的诊断" {
+		t.Fatalf("roundtrip failed: %+v", loaded)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir(), "meta", "diag-guidance.json")); err != nil {
+		t.Fatalf("expected diag guidance file: %v", err)
+	}
+}
+
 // ── Reviews ──
 
 func TestReview_SaveAndLoad(t *testing.T) {
