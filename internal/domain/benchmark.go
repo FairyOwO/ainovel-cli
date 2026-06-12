@@ -10,27 +10,15 @@ import (
 const (
 	BenchmarkProfileVersion      = "benchmark_profile.v1"
 	maxCompactBenchmarkItems     = 8
-	maxCompactBenchmarkSummaries = 5
+	maxCompactBenchmarkSummaries = 12
 )
 
 var benchmarkNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type Benchmark struct {
-	Version            string   `json:"version"`
-	Name               string   `json:"name"`
-	Title              string   `json:"title,omitempty"`
-	CreatedAt          string   `json:"created_at,omitempty"`
-	UpdatedAt          string   `json:"updated_at,omitempty"`
-	Source             string   `json:"source,omitempty"`
-	Summary            string   `json:"summary,omitempty"`
-	Structure          []string `json:"structure,omitempty"`
-	Pacing             []string `json:"pacing,omitempty"`
-	Hooks              []string `json:"hooks,omitempty"`
-	CharacterPatterns  []string `json:"character_patterns,omitempty"`
-	SettingPatterns    []string `json:"setting_patterns,omitempty"`
-	ReusableTechniques []string `json:"reusable_techniques,omitempty"`
-	AuthorizedAnchors  []string `json:"authorized_anchors,omitempty"`
-	DoNotCopy          []string `json:"do_not_copy,omitempty"`
+	BenchmarkCompact
+	CreatedAt string `json:"created_at,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 type BenchmarkCompact struct {
@@ -81,21 +69,16 @@ func CompactBenchmark(b *Benchmark) *BenchmarkCompact {
 	if b == nil {
 		return nil
 	}
-	return &BenchmarkCompact{
-		Version:            b.Version,
-		Name:               b.Name,
-		Title:              b.Title,
-		UpdatedAt:          b.UpdatedAt,
-		Summary:            b.Summary,
-		Structure:          compactBenchmarkItems(b.Structure),
-		Pacing:             compactBenchmarkItems(b.Pacing),
-		Hooks:              compactBenchmarkItems(b.Hooks),
-		CharacterPatterns:  compactBenchmarkItems(b.CharacterPatterns),
-		SettingPatterns:    compactBenchmarkItems(b.SettingPatterns),
-		ReusableTechniques: compactBenchmarkItems(b.ReusableTechniques),
-		AuthorizedAnchors:  compactBenchmarkItems(b.AuthorizedAnchors),
-		DoNotCopy:          compactBenchmarkItems(b.DoNotCopy),
-	}
+	compact := b.BenchmarkCompact
+	compact.Structure = compactBenchmarkItems(b.Structure)
+	compact.Pacing = compactBenchmarkItems(b.Pacing)
+	compact.Hooks = compactBenchmarkItems(b.Hooks)
+	compact.CharacterPatterns = compactBenchmarkItems(b.CharacterPatterns)
+	compact.SettingPatterns = compactBenchmarkItems(b.SettingPatterns)
+	compact.ReusableTechniques = compactBenchmarkItems(b.ReusableTechniques)
+	compact.AuthorizedAnchors = compactBenchmarkItems(b.AuthorizedAnchors)
+	compact.DoNotCopy = compactBenchmarkItems(b.DoNotCopy)
+	return &compact
 }
 
 func CompactBenchmarks(benchmarks []*Benchmark) []BenchmarkCompact {

@@ -16,12 +16,14 @@ func TestBenchmarkStoreSaveLoad(t *testing.T) {
 	}
 
 	benchmark := domain.Benchmark{
-		Version:            domain.BenchmarkProfileVersion,
-		Name:               "demo-benchmark",
-		Title:              "Demo",
-		Summary:            "summary",
-		Structure:          []string{"setup", "turn"},
-		ReusableTechniques: []string{"technique-a"},
+		BenchmarkCompact: domain.BenchmarkCompact{
+			Version:            domain.BenchmarkProfileVersion,
+			Name:               "demo-benchmark",
+			Title:              "Demo",
+			Summary:            "summary",
+			Structure:          []string{"setup", "turn"},
+			ReusableTechniques: []string{"technique-a"},
+		},
 	}
 	if err := st.Benchmark.Save(benchmark); err != nil {
 		t.Fatal(err)
@@ -52,7 +54,7 @@ func TestBenchmarkStoreRejectsTraversalName(t *testing.T) {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Benchmark.Save(domain.Benchmark{Version: domain.BenchmarkProfileVersion, Name: "../bad"}); err == nil {
+	if err := st.Benchmark.Save(newTestBenchmark("../bad")); err == nil {
 		t.Fatal("expected validation error")
 	}
 }
@@ -64,7 +66,7 @@ func TestBenchmarkStoreLoadAllStableOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"zeta", "alpha"} {
-		if err := st.Benchmark.Save(domain.Benchmark{Version: domain.BenchmarkProfileVersion, Name: name}); err != nil {
+		if err := st.Benchmark.Save(newTestBenchmark(name)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -87,7 +89,7 @@ func TestBenchmarkStoreLoadAllReturnsMalformedWarnings(t *testing.T) {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Benchmark.Save(domain.Benchmark{Version: domain.BenchmarkProfileVersion, Name: "valid"}); err != nil {
+	if err := st.Benchmark.Save(newTestBenchmark("valid")); err != nil {
 		t.Fatal(err)
 	}
 	badPath := filepath.Join(dir, "meta", "benchmarks", "bad.json")
@@ -102,4 +104,45 @@ func TestBenchmarkStoreLoadAllReturnsMalformedWarnings(t *testing.T) {
 	if len(benchmarks) != 1 || benchmarks[0].Name != "valid" {
 		t.Fatalf("LoadAll benchmarks = %#v, want only valid benchmark", benchmarks)
 	}
+}
+
+func TestBenchmarkStoreLoadSummariesSortsByUpdatedAt(t *testing.T) {
+	dir := t.TempDir()
+	st := NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	benchmarks := []domain.Benchmark{
+		newTestBenchmarkWithUpdatedAt("alpha", "2026-01-01T00:00:00Z"),
+		newTestBenchmarkWithUpdatedAt("zeta", "2026-03-01T00:00:00Z"),
+		newTestBenchmarkWithUpdatedAt("middle", "2026-02-01T00:00:00Z"),
+	}
+	for _, benchmark := range benchmarks {
+		if err := st.Benchmark.Save(benchmark); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	summaries, err := st.Benchmark.LoadSummaries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 3 {
+		t.Fatalf("LoadSummaries len = %d, want 3", len(summaries))
+	}
+	if summaries[0].Name != "zeta" || summaries[1].Name != "middle" || summaries[2].Name != "alpha" {
+		t.Fatalf("LoadSummaries order = %q, %q, %q", summaries[0].Name, summaries[1].Name, summaries[2].Name)
+	}
+}
+
+func newTestBenchmark(name string) domain.Benchmark {
+	return newTestBenchmarkWithUpdatedAt(name, "")
+}
+
+func newTestBenchmarkWithUpdatedAt(name, updatedAt string) domain.Benchmark {
+	return domain.Benchmark{BenchmarkCompact: domain.BenchmarkCompact{
+		Version:   domain.BenchmarkProfileVersion,
+		Name:      name,
+		UpdatedAt: updatedAt,
+	}}
 }

@@ -141,6 +141,97 @@ func TestImportMarkdownSkipsSymlinkedMarkdown(t *testing.T) {
 	}
 }
 
+func TestImportMarkdownClassifiesCoreHeadingsSpecifically(t *testing.T) {
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "bench")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(sourceDir, "report.md"), `# Demo
+
+## 核心摘要
+- 误会推动主角进入危机。
+
+## 核心角色
+- 主角先隐藏真实目的，再被迫公开选择。
+
+## 核心设定
+- 城市规则由明暗两套契约共同约束。
+`)
+
+	st := store.NewStore(filepath.Join(dir, "output", "novel"))
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportMarkdown(context.Background(), st, Options{SourceDir: sourceDir, Name: "core-demo"}); err != nil {
+		t.Fatalf("ImportMarkdown: %v", err)
+	}
+	benchmark, err := st.Benchmark.Load("core-demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, benchmark.Summary, "误会推动")
+	assertContainsItem(t, benchmark.CharacterPatterns, "隐藏真实目的")
+	assertContainsItem(t, benchmark.SettingPatterns, "明暗两套契约")
+}
+
+func TestImportMarkdownClassifiesChapterOverviewAsSummary(t *testing.T) {
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "bench")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(sourceDir, "report.md"), `# Demo
+
+## 章节概述
+- 第一章用误会逼主角当场做选择。
+
+## 结构
+- 危机暴露后进入临时结盟。
+`)
+
+	st := store.NewStore(filepath.Join(dir, "output", "novel"))
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportMarkdown(context.Background(), st, Options{SourceDir: sourceDir, Name: "overview-demo"}); err != nil {
+		t.Fatalf("ImportMarkdown: %v", err)
+	}
+	benchmark, err := st.Benchmark.Load("overview-demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, benchmark.Summary, "当场做选择")
+	for _, item := range benchmark.Structure {
+		if strings.Contains(item, "当场做选择") {
+			t.Fatalf("chapter overview should be summary, got structure %#v", benchmark.Structure)
+		}
+	}
+	assertContainsItem(t, benchmark.Structure, "临时结盟")
+}
+
+func TestParseMarkdownSectionsSkipsIndentedFences(t *testing.T) {
+	sections := parseMarkdownSections("## 结构\n" +
+		"- 开头危机\n\n" +
+		"  ```\n" +
+		"- 代码块里的列表不应导入\n" +
+		"  ```\n\n" +
+		"    ```\n" +
+		"- 四空格缩进不是 fenced code block，应按正文保留\n" +
+		"    ```\n")
+	if len(sections) != 1 {
+		t.Fatalf("sections len = %d, want 1", len(sections))
+	}
+	items := markdownItems(sections[0].lines)
+	assertContainsItem(t, items, "开头危机")
+	assertContainsItem(t, items, "四空格缩进不是 fenced code block")
+	for _, item := range items {
+		if strings.Contains(item, "代码块里的列表") {
+			t.Fatalf("fenced code content should be skipped, got %#v", items)
+		}
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

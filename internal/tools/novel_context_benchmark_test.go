@@ -20,19 +20,21 @@ func TestContextToolInjectsCompactBenchmarkSummaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	benchmark := domain.Benchmark{
-		Version:            domain.BenchmarkProfileVersion,
-		Name:               "demo-benchmark",
-		Title:              "Demo",
-		Source:             "manual",
-		Summary:            "compact summary only",
-		Structure:          []string{"opening", "escalation", "turn"},
-		Pacing:             []string{"fast"},
-		Hooks:              []string{"chapter hook"},
-		CharacterPatterns:  []string{"protagonist"},
-		SettingPatterns:    []string{"urban"},
-		ReusableTechniques: []string{"technique-a"},
-		AuthorizedAnchors:  []string{"anchor-a"},
-		DoNotCopy:          []string{"do not copy"},
+		Source: "manual",
+		BenchmarkCompact: domain.BenchmarkCompact{
+			Version:            domain.BenchmarkProfileVersion,
+			Name:               "demo-benchmark",
+			Title:              "Demo",
+			Summary:            "compact summary only",
+			Structure:          []string{"opening", "escalation", "turn"},
+			Pacing:             []string{"fast"},
+			Hooks:              []string{"chapter hook"},
+			CharacterPatterns:  []string{"protagonist"},
+			SettingPatterns:    []string{"urban"},
+			ReusableTechniques: []string{"technique-a"},
+			AuthorizedAnchors:  []string{"anchor-a"},
+			DoNotCopy:          []string{"do not copy"},
+		},
 	}
 	if err := st.Benchmark.Save(benchmark); err != nil {
 		t.Fatal(err)
@@ -72,7 +74,7 @@ func TestContextToolInjectsBenchmarkStyleForChapterFocus(t *testing.T) {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Benchmark.Save(domain.Benchmark{
+	if err := st.Benchmark.Save(domain.Benchmark{BenchmarkCompact: domain.BenchmarkCompact{
 		Version:            domain.BenchmarkProfileVersion,
 		Name:               "demo-benchmark",
 		Title:              "Demo",
@@ -82,7 +84,7 @@ func TestContextToolInjectsBenchmarkStyleForChapterFocus(t *testing.T) {
 		Hooks:              []string{"第12章 章尾用身份反转制造追读"},
 		ReusableTechniques: []string{"短句推进动作，长句承接心理余波"},
 		DoNotCopy:          []string{"不复制原文句子、角色名或桥段"},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{
@@ -183,12 +185,12 @@ func TestContextToolTrimsBenchmarkSummariesWhenOverBudget(t *testing.T) {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Benchmark.Save(domain.Benchmark{
+	if err := st.Benchmark.Save(domain.Benchmark{BenchmarkCompact: domain.BenchmarkCompact{
 		Version:   domain.BenchmarkProfileVersion,
 		Name:      "oversized",
 		Summary:   longBenchmarkText(140000),
 		Structure: []string{longBenchmarkText(140000)},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "Start", CoreEvent: "Begin"}}); err != nil {
@@ -226,11 +228,11 @@ func TestContextToolWarnsAndKeepsValidBenchmarkSummaries(t *testing.T) {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Benchmark.Save(domain.Benchmark{
+	if err := st.Benchmark.Save(domain.Benchmark{BenchmarkCompact: domain.BenchmarkCompact{
 		Version:   domain.BenchmarkProfileVersion,
 		Name:      "valid",
 		Structure: []string{"opening", "turn", "payoff"},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	badPath := filepath.Join(dir, "meta", "benchmarks", "bad.json")

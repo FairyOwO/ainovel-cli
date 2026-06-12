@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 )
@@ -84,5 +85,8 @@ func (s *BenchmarkStore) LoadSummaries() ([]domain.BenchmarkCompact, error) {
 	if len(benchmarks) == 0 {
 		return nil, err
 	}
+	sort.SliceStable(benchmarks, func(i, j int) bool {
+		return benchmarks[i].UpdatedAt > benchmarks[j].UpdatedAt
+	})
 	return domain.CompactBenchmarks(benchmarks), err
 }

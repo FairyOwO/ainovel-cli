@@ -67,10 +67,12 @@ func ImportMarkdown(ctx context.Context, st *store.Store, opts Options) (Result,
 
 	now := time.Now().Format(time.RFC3339)
 	builder := benchmarkImportBuilder{benchmark: domain.Benchmark{
-		Version:   domain.BenchmarkProfileVersion,
-		Name:      name,
+		BenchmarkCompact: domain.BenchmarkCompact{
+			Version:   domain.BenchmarkProfileVersion,
+			Name:      name,
+			UpdatedAt: now,
+		},
 		CreatedAt: now,
-		UpdatedAt: now,
 		Source:    absDir,
 	}}
 
@@ -203,7 +205,7 @@ func parseMarkdownSections(text string) []markdownSection {
 	}
 	for raw := range strings.SplitSeq(text, "\n") {
 		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+		if isMarkdownFence(raw) {
 			inCode = !inCode
 			continue
 		}
@@ -221,6 +223,19 @@ func parseMarkdownSections(text string) []markdownSection {
 	}
 	flush()
 	return sections
+}
+
+func isMarkdownFence(line string) bool {
+	line = strings.TrimRight(line, " \t\r")
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 {
+		return false
+	}
+	line = line[indent:]
+	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
 }
 
 func markdownHeading(line string) (string, bool) {
@@ -298,8 +313,6 @@ func categoryFromText(text string) string {
 		return "do_not_copy"
 	case containsAny(text, "锚点", "授权", "可借鉴", "anchor"):
 		return "anchors"
-	case containsAny(text, "摘要", "概述", "总览", "核心", "报告", "summary", "overview"):
-		return "summary"
 	case containsAny(text, "文风", "风格", "技法", "方法", "可复用", "写法", "语言", "technique", "style"):
 		return "techniques"
 	case containsAny(text, "节奏", "爽点", "情绪", "推进", "节拍", "pacing", "beat"):
@@ -310,6 +323,8 @@ func categoryFromText(text string) string {
 		return "characters"
 	case containsAny(text, "设定", "世界", "背景", "规则", "setting", "world"):
 		return "setting"
+	case containsAny(text, "摘要", "概述", "总览", "核心", "报告", "summary", "overview"):
+		return "summary"
 	case containsAny(text, "结构", "剧情", "情节", "章节", "大纲", "主线", "拆文", "structure", "plot"):
 		return "structure"
 	default:

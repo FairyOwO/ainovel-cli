@@ -7,16 +7,18 @@ import (
 
 func TestCompactBenchmarkCapsArrays(t *testing.T) {
 	benchmark := &Benchmark{
-		Version:            BenchmarkProfileVersion,
-		Name:               "demo-benchmark",
-		Structure:          longBenchmarkList("structure", maxCompactBenchmarkItems+4),
-		Pacing:             longBenchmarkList("pacing", maxCompactBenchmarkItems+4),
-		Hooks:              longBenchmarkList("hook", maxCompactBenchmarkItems+4),
-		CharacterPatterns:  longBenchmarkList("character", maxCompactBenchmarkItems+4),
-		SettingPatterns:    longBenchmarkList("setting", maxCompactBenchmarkItems+4),
-		ReusableTechniques: longBenchmarkList("technique", maxCompactBenchmarkItems+4),
-		AuthorizedAnchors:  longBenchmarkList("anchor", maxCompactBenchmarkItems+4),
-		DoNotCopy:          longBenchmarkList("copy", maxCompactBenchmarkItems+4),
+		BenchmarkCompact: BenchmarkCompact{
+			Version:            BenchmarkProfileVersion,
+			Name:               "demo-benchmark",
+			Structure:          longBenchmarkList("structure", maxCompactBenchmarkItems+4),
+			Pacing:             longBenchmarkList("pacing", maxCompactBenchmarkItems+4),
+			Hooks:              longBenchmarkList("hook", maxCompactBenchmarkItems+4),
+			CharacterPatterns:  longBenchmarkList("character", maxCompactBenchmarkItems+4),
+			SettingPatterns:    longBenchmarkList("setting", maxCompactBenchmarkItems+4),
+			ReusableTechniques: longBenchmarkList("technique", maxCompactBenchmarkItems+4),
+			AuthorizedAnchors:  longBenchmarkList("anchor", maxCompactBenchmarkItems+4),
+			DoNotCopy:          longBenchmarkList("copy", maxCompactBenchmarkItems+4),
+		},
 	}
 
 	compact := CompactBenchmark(benchmark)
