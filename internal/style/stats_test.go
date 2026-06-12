@@ -79,6 +79,23 @@ func TestAnalyzeChineseProseHandlesChineseSentenceBoundaries(t *testing.T) {
 	}
 }
 
+func TestAnalyzeChineseProseDetectsEmotionLabelsAndStartCategories(t *testing.T) {
+	text := "然而他感到紧张。与此同时她很愤怒。可是门外没有声音。随后雨停了。终于灯灭了。"
+	stats := AnalyzeChineseProse(text)
+	if stats.Metrics["emotion_label_density_per_1000"].Value == 0 {
+		t.Fatalf("expected emotion label density, got %+v", stats.Metrics)
+	}
+	if stats.Metrics["sentence_start_abstract_connector_ratio"].Value < 0.8 {
+		t.Fatalf("expected abstract connector start ratio, got %+v", stats.Metrics["sentence_start_abstract_connector_ratio"])
+	}
+	if !hasHotspot(stats.Hotspots, "emotion_label_density") {
+		t.Fatalf("expected emotion_label_density hotspot, got %+v", stats.Hotspots)
+	}
+	if !hasHotspot(stats.Hotspots, "abstract_connector_sentence_start") {
+		t.Fatalf("expected abstract_connector_sentence_start hotspot, got %+v", stats.Hotspots)
+	}
+}
+
 func hasHotspot(hotspots []domain.StyleHotspot, ruleID string) bool {
 	for _, hotspot := range hotspots {
 		if hotspot.RuleID == ruleID {

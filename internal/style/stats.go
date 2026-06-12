@@ -37,6 +37,8 @@ func AnalyzeChineseProse(text string) *domain.StyleStats {
 	paragraphMean, paragraphStd := meanStd(paragraphLengths)
 	dialogueRatio := computeDialogueRatio(text)
 	startUnique := sentenceStartUniqueRate(sentences)
+	startCategories := sentenceStartCategoryStats(sentences)
+	emotionLabelDensity, emotionLabelHits := emotionLabelSignal(text)
 	repeatedNGramRate, repeatedNGrams := repeatedNGramSignal(text, 3)
 	patternMatches := matchPatterns(text)
 	patternDensity := 0.0
@@ -47,20 +49,26 @@ func AnalyzeChineseProse(text string) *domain.StyleStats {
 	homogeneousRatio := homogeneousSentenceRatio(sentenceLengths)
 
 	metrics := map[string]domain.StyleMetric{
-		"sentence_length_mean":       {Value: round2(sentenceMean), Unit: "runes", Message: "句长均值"},
-		"sentence_length_stddev":     {Value: round2(sentenceStd), Unit: "runes", Message: "句长标准差"},
-		"sentence_length_cv":         {Value: round2(coefficient(sentenceMean, sentenceStd)), Message: "句长变异系数"},
-		"homogeneous_sentence_ratio": {Value: round2(homogeneousRatio), Message: "连续同构句比例"},
-		"paragraph_length_mean":      {Value: round2(paragraphMean), Unit: "runes", Message: "段落长度均值"},
-		"paragraph_length_stddev":    {Value: round2(paragraphStd), Unit: "runes", Message: "段落长度标准差"},
-		"paragraph_uniform_ratio":    {Value: round2(uniformRatio), Message: "段落长度均匀度"},
-		"dialogue_ratio":             {Value: round2(dialogueRatio), Message: "对话比例"},
-		"sentence_start_unique_rate": {Value: round2(startUnique), Message: "句首独特率"},
-		"repeated_ngram_rate":        {Value: round2(repeatedNGramRate), Message: "重复三字片段密度"},
-		"pattern_density_per_1000":   {Value: round2(patternDensity), Unit: "hits/1000_runes", Message: "套话命中密度"},
+		"sentence_length_mean":                    {Value: round2(sentenceMean), Unit: "runes", Message: "句长均值"},
+		"sentence_length_stddev":                  {Value: round2(sentenceStd), Unit: "runes", Message: "句长标准差"},
+		"sentence_length_cv":                      {Value: round2(coefficient(sentenceMean, sentenceStd)), Message: "句长变异系数"},
+		"homogeneous_sentence_ratio":              {Value: round2(homogeneousRatio), Message: "连续同构句比例"},
+		"paragraph_length_mean":                   {Value: round2(paragraphMean), Unit: "runes", Message: "段落长度均值"},
+		"paragraph_length_stddev":                 {Value: round2(paragraphStd), Unit: "runes", Message: "段落长度标准差"},
+		"paragraph_uniform_ratio":                 {Value: round2(uniformRatio), Message: "段落长度均匀度"},
+		"dialogue_ratio":                          {Value: round2(dialogueRatio), Message: "对话比例"},
+		"sentence_start_unique_rate":              {Value: round2(startUnique), Message: "句首独特率"},
+		"sentence_start_dominant_category_ratio":  {Value: round2(startCategories.DominantRatio), Message: "句首主导类别占比"},
+		"sentence_start_abstract_connector_ratio": {Value: round2(startCategories.AbstractConnectorRatio), Message: "抽象/连接词句首占比"},
+		"emotion_label_density_per_1000":          {Value: round2(emotionLabelDensity), Unit: "hits/1000_runes", Message: "情绪标签密度"},
+		"repeated_ngram_rate":                     {Value: round2(repeatedNGramRate), Message: "重复三字片段密度"},
+		"pattern_density_per_1000":                {Value: round2(patternDensity), Unit: "hits/1000_runes", Message: "套话命中密度"},
+	}
+	for category, ratio := range startCategories.Ratios {
+		metrics["sentence_start_category_"+category+"_ratio"] = domain.StyleMetric{Value: round2(ratio), Message: "句首类别占比:" + category}
 	}
 
-	hotspots := buildHotspots(sentences, sentenceStd, startUnique, dialogueRatio, uniformRatio, repeatedNGrams, patternMatches)
+	hotspots := buildHotspots(sentences, sentenceStd, startUnique, startCategories, dialogueRatio, uniformRatio, emotionLabelDensity, emotionLabelHits, repeatedNGrams, patternMatches)
 	return &domain.StyleStats{
 		SchemaVersion:  domain.StyleStatsSchemaVersion,
 		ComputedAt:     time.Now().Format(time.RFC3339),
@@ -220,6 +228,76 @@ func sentenceStartUniqueRate(sentences []sentenceInfo) float64 {
 	return float64(len(starts)) / float64(count)
 }
 
+type sentenceStartStats struct {
+	Ratios                 map[string]float64
+	DominantCategory       string
+	DominantRatio          float64
+	AbstractConnectorRatio float64
+}
+
+func sentenceStartCategoryStats(sentences []sentenceInfo) sentenceStartStats {
+	counts := map[string]int{}
+	total := 0
+	for _, sentence := range sentences {
+		category := sentenceStartCategory(sentence.Text)
+		if category == "" {
+			continue
+		}
+		counts[category]++
+		total++
+	}
+	stats := sentenceStartStats{Ratios: map[string]float64{}}
+	if total == 0 {
+		return stats
+	}
+	for category, count := range counts {
+		ratio := float64(count) / float64(total)
+		stats.Ratios[category] = ratio
+		if ratio > stats.DominantRatio || (ratio == stats.DominantRatio && category < stats.DominantCategory) {
+			stats.DominantCategory = category
+			stats.DominantRatio = ratio
+		}
+	}
+	stats.AbstractConnectorRatio = stats.Ratios["abstract_connector"]
+	return stats
+}
+
+func sentenceStartCategory(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	first := firstMeaningfulRunes(trimmed, 1)
+	if first == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "“") || strings.HasPrefix(trimmed, "\"") || strings.HasPrefix(trimmed, "「") || strings.HasPrefix(trimmed, "『") {
+		return "dialogue"
+	}
+	if hasPrefix(trimmed, []string{"然而", "与此同时", "此时", "这时", "可是", "但是", "随后", "于是", "后来", "终于", "忽然", "突然"}) {
+		return "abstract_connector"
+	}
+	if hasPrefix(trimmed, []string{"夜里", "夜色", "清晨", "黎明", "天亮", "晨光", "黄昏", "雨里", "雨声", "门外", "窗外", "街上", "屋里", "院中"}) {
+		return "time_place"
+	}
+	if strings.ContainsRune("他她它我你", []rune(first)[0]) {
+		return "pronoun"
+	}
+	if strings.ContainsRune("走站坐伸抬低握推拉看看听问说笑转拿放踩奔跑躲捡撕扔", []rune(first)[0]) {
+		return "action"
+	}
+	return "other"
+}
+
+func hasPrefix(text string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func firstMeaningfulRunes(text string, limit int) string {
 	var b strings.Builder
 	for _, r := range text {
@@ -257,6 +335,25 @@ func repeatedNGramSignal(text string, n int) (float64, []string) {
 	}
 	sort.Strings(repeated)
 	return float64(len(repeated)) / float64(len(runes)), repeated
+}
+
+var emotionLabels = []string{
+	"紧张", "愤怒", "悲伤", "恐惧", "害怕", "焦虑", "绝望", "震惊", "惊讶", "痛苦", "难过", "不安", "委屈", "兴奋", "激动", "羞愧", "尴尬", "五味杂陈",
+}
+
+func emotionLabelSignal(text string) (float64, []string) {
+	var hits []string
+	for _, label := range emotionLabels {
+		count := strings.Count(text, label)
+		for range count {
+			hits = append(hits, label)
+		}
+	}
+	length := proseLen(text)
+	if length == 0 {
+		return 0, hits
+	}
+	return float64(len(hits)) * 1000 / float64(length), hits
 }
 
 func paragraphUniformRatio(lengths []float64) float64 {
@@ -313,7 +410,7 @@ func matchPatterns(text string) []patternMatch {
 	return matches
 }
 
-func buildHotspots(sentences []sentenceInfo, sentenceStd, startUnique, dialogueRatio, uniformRatio float64, repeated []string, patterns []patternMatch) []domain.StyleHotspot {
+func buildHotspots(sentences []sentenceInfo, sentenceStd, startUnique float64, startCategories sentenceStartStats, dialogueRatio, uniformRatio, emotionLabelDensity float64, emotionLabelHits []string, repeated []string, patterns []patternMatch) []domain.StyleHotspot {
 	var hotspots []domain.StyleHotspot
 	add := func(ruleID, severity string, span *domain.TextSpan, paragraph, sentence int, evidence, message, suggestion string) {
 		hotspots = append(hotspots, domain.StyleHotspot{ID: fmt.Sprintf("hs_%03d", len(hotspots)+1), RuleID: ruleID, Severity: severity, Span: span, ParagraphIndex: paragraph, SentenceIndex: sentence, Evidence: evidence, Message: message, SuggestionType: suggestion})
@@ -324,6 +421,12 @@ func buildHotspots(sentences []sentenceInfo, sentenceStd, startUnique, dialogueR
 	if startUnique < 0.7 && len(sentences) >= 4 {
 		add("repeated_sentence_start", "warning", &domain.TextSpan{Start: sentences[0].Start, End: sentences[min(4, len(sentences))-1].End}, sentences[0].Paragraph, 1, joinSentenceEvidence(sentences, 4), "句首重复偏多，句式可能同构", "vary_sentence_opening")
 	}
+	if startCategories.DominantRatio >= 0.55 && len(sentences) >= 5 {
+		add("dominant_sentence_start_category", "info", nil, 0, 0, fmt.Sprintf("%s=%.2f", startCategories.DominantCategory, startCategories.DominantRatio), "句首类别过于集中，开场方式可能固化", "vary_sentence_opening_category")
+	}
+	if startCategories.AbstractConnectorRatio >= 0.3 && len(sentences) >= 5 {
+		add("abstract_connector_sentence_start", "warning", nil, 0, 0, fmt.Sprintf("abstract_connector=%.2f", startCategories.AbstractConnectorRatio), "抽象/连接词起句偏多，转场可能模板化", "remove_template_transition")
+	}
 	if dialogueRatio < 0.1 && len(sentences) >= 4 {
 		add("low_dialogue_ratio", "info", nil, 0, 0, fmt.Sprintf("dialogue_ratio=%.2f", dialogueRatio), "对话比例偏低，需结合章型判断", "check_dialogue_balance")
 	}
@@ -332,6 +435,9 @@ func buildHotspots(sentences []sentenceInfo, sentenceStd, startUnique, dialogueR
 	}
 	if uniformRatio > 0.8 {
 		add("uniform_paragraph_length", "warning", nil, 0, 0, fmt.Sprintf("min/max=%.2f", uniformRatio), "段落长度过于均匀，结构可能模板化", "vary_paragraph_length")
+	}
+	if emotionLabelDensity >= 6 {
+		add("emotion_label_density", "warning", nil, 0, 0, strings.Join(uniqueLimited(emotionLabelHits, 5), "、"), "情绪标签密度偏高，可能以概述代替展示", "show_emotion_with_body_action")
 	}
 	for _, gram := range repeated {
 		add("repeated_ngram", "info", nil, 0, 0, gram, "重复片段出现较多", "reduce_repetition")
@@ -361,6 +467,7 @@ func summarize(metrics map[string]domain.StyleMetric, hotspots []domain.StyleHot
 		fmt.Sprintf("句长std %.2f", metrics["sentence_length_stddev"].Value),
 		fmt.Sprintf("对话比 %.2f", metrics["dialogue_ratio"].Value),
 		fmt.Sprintf("句首独特率 %.2f", metrics["sentence_start_unique_rate"].Value),
+		fmt.Sprintf("情绪标签 %.2f/千字", metrics["emotion_label_density_per_1000"].Value),
 		fmt.Sprintf("套话密度 %.2f/千字", metrics["pattern_density_per_1000"].Value),
 	}
 	if len(hotspots) > 0 {
@@ -369,6 +476,22 @@ func summarize(metrics map[string]domain.StyleMetric, hotspots []domain.StyleHot
 		parts = append(parts, "未发现高优先级机械热点")
 	}
 	return strings.Join(parts, "；")
+}
+
+func uniqueLimited(items []string, limit int) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, min(limit, len(items)))
+	for _, item := range items {
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func round2(value float64) float64 {
