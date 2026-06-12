@@ -33,6 +33,14 @@ func (t *SaveReviewTool) ReadOnly(_ json.RawMessage) bool        { return false 
 func (t *SaveReviewTool) ConcurrencySafe(_ json.RawMessage) bool { return false }
 
 func (t *SaveReviewTool) Schema() map[string]any {
+	targetSchema := schema.Object(
+		schema.Property("hotspot_id", schema.String("style_stats.hotspots 中的热点 ID，如有")),
+		schema.Property("rule_id", schema.String("命中的规则 ID，如 low_sentence_variance / cliche_summary_in_the_end")),
+		schema.Property("paragraph_index", schema.Int("目标段落序号（1-based，如可定位）")),
+		schema.Property("sentence_index", schema.Int("目标句子序号（1-based，如可定位）")),
+		schema.Property("old_text", schema.String("建议优先局部替换的原文片段；用于 edit_chapter old_string 时必须从原文精确复制")),
+		schema.Property("suggestion_type", schema.String("建议修复方式，如 remove_summary / vary_sentence_length / check_dialogue_balance")),
+	)
 	issueSchema := schema.Object(
 		schema.Property("type", schema.Enum("问题维度", "consistency", "character", "pacing", "continuity", "foreshadow", "hook", "aesthetic")).Required(),
 		schema.Property("severity", schema.Enum("严重程度", "critical", "error", "warning")).Required(),
@@ -40,6 +48,7 @@ func (t *SaveReviewTool) Schema() map[string]any {
 		schema.Property("description", schema.String("问题描述")).Required(),
 		schema.Property("evidence", schema.String("证据：原文片段、具体情节或状态数据")).Required(),
 		schema.Property("suggestion", schema.String("修改建议")),
+		schema.Property("targets", schema.Array("可选：局部修补目标。只挂 issue 层，不改变 affected_chapters 路由", targetSchema)),
 	)
 	dimensionSchema := schema.Object(
 		schema.Property("dimension", schema.Enum("维度", "consistency", "character", "pacing", "continuity", "foreshadow", "hook", "aesthetic")).Required(),
@@ -105,10 +114,11 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	if riskGate := evaluateRiskLevelGate(r.Issues); riskGate != "" {
 		if strings.Contains(riskGate, "rewrite") {
 			finalVerdict = "rewrite"
+			escalationReason = riskGate
 		} else if finalVerdict == "accept" {
 			finalVerdict = "polish"
+			escalationReason = riskGate
 		}
-		escalationReason = riskGate
 	}
 
 	// 根据最终 verdict 更新 Progress。

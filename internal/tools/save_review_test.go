@@ -307,14 +307,18 @@ func TestSaveReviewRiskLevelS2DoesNotDowngradeRewrite(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	var payload struct {
-		FinalVerdict string `json:"final_verdict"`
-		NextFlow     string `json:"next_flow"`
+		FinalVerdict     string `json:"final_verdict"`
+		EscalationReason string `json:"escalation_reason"`
+		NextFlow         string `json:"next_flow"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	if payload.FinalVerdict != "rewrite" || payload.NextFlow != "rewriting" {
 		t.Fatalf("expected S2 not to downgrade rewrite, got final=%q flow=%q", payload.FinalVerdict, payload.NextFlow)
+	}
+	if strings.Contains(payload.EscalationReason, "polish") {
+		t.Fatalf("rewrite result should not report polish escalation reason: %q", payload.EscalationReason)
 	}
 }
 
@@ -396,5 +400,77 @@ func TestReviewIssueRiskLevelIsOptionalForOldJSON(t *testing.T) {
 	}
 	if review.Issues[0].RiskLevel != "" {
 		t.Fatalf("expected missing risk_level to load as empty, got %q", review.Issues[0].RiskLevel)
+	}
+	if len(review.Issues[0].Targets) != 0 {
+		t.Fatalf("expected missing targets to load empty, got %+v", review.Issues[0].Targets)
+	}
+}
+
+func TestSaveReviewPersistsIssueTargetsWithoutChangingRouting(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init("test", 6); err != nil {
+		t.Fatalf("InitProgress: %v", err)
+	}
+
+	tool := NewSaveReviewTool(s)
+	args, err := json.Marshal(map[string]any{
+		"chapter":    3,
+		"scope":      "chapter",
+		"dimensions": passingReviewDimensions(),
+		"issues": []map[string]any{
+			{
+				"type":        "aesthetic",
+				"severity":    "error",
+				"risk_level":  "S2",
+				"description": "章末总结腔明显",
+				"evidence":    "这一刻，仿佛一切都有了答案。",
+				"suggestion":  "删掉总结句，改为角色动作收束。",
+				"targets": []map[string]any{
+					{
+						"hotspot_id":      "hs_004",
+						"rule_id":         "cliche_summary_in_the_end",
+						"paragraph_index": 18,
+						"sentence_index":  63,
+						"old_text":        "这一刻，仿佛一切都有了答案。",
+						"suggestion_type": "remove_summary",
+					},
+				},
+			},
+		},
+		"verdict":           "polish",
+		"summary":           "只需局部打磨章末总结腔。",
+		"affected_chapters": []int{3},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var out struct {
+		FinalVerdict     string `json:"final_verdict"`
+		AffectedChapters []int  `json:"affected_chapters"`
+		NextFlow         string `json:"next_flow"`
+	}
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("Unmarshal result: %v", err)
+	}
+	if out.FinalVerdict != "polish" || out.NextFlow != "polishing" || len(out.AffectedChapters) != 1 || out.AffectedChapters[0] != 3 {
+		t.Fatalf("targets must not change routing, got %+v", out)
+	}
+	review, err := s.World.LoadReview(3)
+	if err != nil {
+		t.Fatalf("LoadReview: %v", err)
+	}
+	if review == nil || len(review.Issues) != 1 || len(review.Issues[0].Targets) != 1 {
+		t.Fatalf("expected persisted issue target, got %+v", review)
+	}
+	target := review.Issues[0].Targets[0]
+	if target.RuleID != "cliche_summary_in_the_end" || target.OldText == "" || target.SuggestionType != "remove_summary" {
+		t.Fatalf("unexpected target: %+v", target)
 	}
 }
