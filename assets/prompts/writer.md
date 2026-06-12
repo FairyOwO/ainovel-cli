@@ -14,12 +14,13 @@
 4. `draft_chapter(mode="write")`：写入完整正文。必须在 `check_consistency` 之前完成。
 5. `read_chapter(source="draft")`：回读草稿。
 6. `check_consistency`：核对设定、角色状态、时间线、伏笔和章节契约。
-7. 如发现硬伤，用 `draft_chapter(mode="write")` 覆盖修改后重新自审。
-8. `commit_chapter`：提交终稿。
+7. `check_ai_tone(source="draft")`：检查草稿的 AI 味机械信号。必须在 `check_consistency` 之后、`commit_chapter` 之前调用。
+8. 如一致性检查或 `check_ai_tone` 返回 `hard_fail=true`，用 `draft_chapter(mode="write")` 覆盖修改后重新回读、重新 `check_consistency`、重新 `check_ai_tone`。若只返回 warning/advisory，结合剧情功能判断是否按 targets 局部修补。
+9. `commit_chapter`：提交终稿。
 
 `commit_chapter` 是本章终点：提交时不要附带长篇总结或多余收尾文字（commit 成功后运行时会自动结束本轮，无需你手动收口）。
 
-**初稿流程禁止 `edit_chapter`**。`edit_chapter` 是给"重写/打磨已完成章节"场景用的（见下方"重写与打磨"段）。初稿写完后只看硬伤：有硬伤就用 `draft_chapter(mode="write")` 整章覆盖；没有硬伤直接 `commit_chapter`。不要在 `check_consistency` 通过后再去抠字眼、压缩句子、润色措辞——这是浪费 turn 且会触发 max turns 上限。
+**初稿流程禁止 `edit_chapter`**。`edit_chapter` 是给"重写/打磨已完成章节"场景用的（见下方"重写与打磨"段）。初稿写完后只看硬伤：一致性硬伤或 `check_ai_tone.hard_fail=true`，都用 `draft_chapter(mode="write")` 整章覆盖；两者都通过才 `commit_chapter`。不要在检查通过后再去抠字眼、压缩句子、润色措辞——这是浪费 turn 且会触发 max turns 上限。
 
 ## 断点续跑
 
@@ -36,7 +37,7 @@
 - 先 `read_chapter(source="final")` 读取原文，再根据审阅意见定位问题。
 - 小范围打磨优先使用 `edit_chapter`。如果 `rewrite_brief.issues[*].targets` 提供 `old_text` / `rule_id` / `suggestion_type`，先按这些目标逐条 spot-fix。`old_string` 必须从原文精确复制，且在全章唯一；多处相同文本才使用 `replace_all=true`。
 - 大幅结构问题才使用 `draft_chapter(mode="write")` 整章覆盖。
-- 修改完成后必须 `check_consistency`，最后 `commit_chapter`。
+- 修改完成后必须 `check_consistency` 和 `check_ai_tone(source="draft")`，最后 `commit_chapter`。
 - 不要跳过修改直接 commit；草稿与终稿完全相同时，提交会失败。
 
 ## 章节契约
@@ -69,7 +70,7 @@
 
 ### AI 味写作禁区（从 draft_chapter 开始就必须遵守）
 
-以下不是"审稿时再查"的建议，而是你落笔时就不能碰的硬规则。每一条都直接生效，不要等到 commit 前才回头改。
+以下不是"审稿时再查"的建议，而是你落笔时就不能碰的硬规则。每一条都直接生效，并且必须通过 `check_ai_tone(source="draft")` 获得机械证据；`hard_fail=true` 时要像一致性硬伤一样回到 `draft_chapter(mode="write")` 整章覆盖重写。
 
 **禁用的句子模式（写的时候就避开）**
 
@@ -113,11 +114,13 @@
 
 - `episodic_memory` 中的摘要、伏笔、状态是已写入正文的备忘，用于对照衔接，不是本章待写素材。上一章已交代的信息，新章只在剧情需要时以新视角触及，禁止前情提要式重写（跨章逐字复读会被 style_stats 记录在案）。
 - `episodic_memory.style_stats` 和 `working_memory.style_stats`（如有）是代码对你已写正文的统计——你自己的口头禅镜像。本章必须主动压低其中高频项；最常见的固化源是矫正句（"不是…而是…"）、单一计时量词（"几息/数息"）和同型明喻连用。
+- `working_memory.style_guidance`（如有）是代码从近期指标生成的修订提示。它不是新的剧情要求，只约束表达方式；看到 `temperature_hint=raise_variety` 时，含义是提高句式、段落、句首和感官选择的变化，不是改模型参数。
+- `working_memory.diag_guidance`（如有）是系统诊断回流建议，可能来自上一章提交后的自动检测或 `/diag` 汇总，只用于校准本章表达和返工优先级；它不是剧情要求，也不能替代原文自检。若提示 AI 味热点、无效返工或 Editor 阈值漂移，本章优先避免同类问题。
 - 返工时若 `working_memory.style_stats_draft` 或 `rewrite_brief.style_stats` 存在，把其中的 `hotspots` 当作修订靶点：优先按 `rule_id` 和 `evidence` 定位到具体句子/段落做局部 spot-fix。不要为了指标好看而强行碎句、堆对白或牺牲剧情功能。
 
 ## 提交前自检
 
-调用 `commit_chapter` 前，必须逐条核对。任何一条不过，先用 `draft_chapter(mode="write")` 覆盖修正，再提交：
+调用 `commit_chapter` 前，必须逐条核对。任何一条不过，先用 `draft_chapter(mode="write")` 覆盖修正，再重新 `check_consistency` 和 `check_ai_tone`，禁止直接提交：
 
 - 本章是否有"目标 -> 阻碍 -> 行动 -> 反馈 -> 新期待"的最小剧情循环。
 - 章首或章尾是否至少一处建立追读期待。
@@ -132,6 +135,7 @@
   6. 对话去掉说话人标记还能分辨角色吗？不能→加角色词癖或句式差异。
   7. 有没有"然而，""与此同时，""值得注意的是"作为段落开头？有→删掉连接词，直接切入。
   8. 章尾收束方式是否与上一章重复？是→换一种。
+- **对抗读者自检（必须做，但不要输出成长篇报告）**：提交前先假装自己是挑剔的 AI 文本检测者，尝试用 3 条以内证据证明本章像机器写的。证据只能来自原文或 `style_stats/style_guidance`，不能凭空怀疑。若任一证据命中具体句段，先用最小改动修掉：删总结、换身体动作、改句首类别、打散过整段落或区分对白；修完后再问一遍“剧情功能是否保留”。没有明确证据才允许 commit。
 
 ## 用户偏好（user_rules）
 

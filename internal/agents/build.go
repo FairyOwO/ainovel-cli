@@ -59,6 +59,7 @@ func BuildCoordinator(
 	rulesOpts := rules.DefaultOptions(bundle.RulesFS)
 	contextTool := tools.NewContextTool(store, bundle.References, cfg.Style, rulesOpts)
 	readChapter := tools.NewReadChapterTool(store)
+	checkAITone := tools.NewCheckAIToneTool(store)
 	askUser := tools.NewAskUserTool()
 
 	architectTools := []agentcore.Tool{
@@ -72,11 +73,13 @@ func BuildCoordinator(
 		tools.NewDraftChapterTool(store),
 		tools.NewEditChapterTool(store),
 		tools.NewCheckConsistencyTool(store),
+		checkAITone,
 		tools.NewCommitChapterTool(store).WithRules(rulesOpts),
 	}
 	editorTools := []agentcore.Tool{
 		contextTool,
 		readChapter,
+		checkAITone,
 		tools.NewSaveReviewTool(store),
 		tools.NewSaveArcSummaryTool(store),
 		tools.NewSaveVolumeSummaryTool(store),
