@@ -182,6 +182,13 @@ func TestExtract_CheckConsistency(t *testing.T) {
 	mustContain(t, out, "chapter: 234")
 }
 
+func TestExtract_CheckAITone(t *testing.T) {
+	out := feedAll(t, "check_ai_tone", `{"chapter":234,"source":"draft"}`)
+	mustContain(t, out, "✻ AI 味检查")
+	mustContain(t, out, "chapter: 234")
+	mustContain(t, out, "source: draft")
+}
+
 // 空 args 兜底：coordinator 调 novel_context 不传参时 args 是 {}，
 // 不能完全静默，至少要输出 header 让用户感知调用。
 func TestExtract_NovelContextEmptyArgs(t *testing.T) {

@@ -30,6 +30,7 @@ var toolDisplays = map[string]toolDisplay{
 	"save_foundation":     {header: "✻ 设定"},
 	"read_chapter":        {header: "✻ 读章节"},
 	"check_consistency":   {header: "✻ 一致性检查"},
+	"check_ai_tone":       {header: "✻ AI 味检查"},
 	"novel_context":       {header: "✻ 查询上下文"},
 }
 
