@@ -37,6 +37,9 @@ var allRules = []RuleFunc{
 	PayoffMissPattern,
 	ExcessiveRewrites,
 	WordCountAnomaly,
+	AIFlavorHotspots,
+	RewriteEffectiveness,
+	EditorConsistency,
 	// Planning
 	StaleForeshadow,
 	CompassDrift,
@@ -112,6 +115,29 @@ func buildStats(snap *Snapshot) Stats {
 	}
 	if dimCount > 0 {
 		st.AvgReviewScore = totalScore / float64(dimCount)
+	}
+
+	st.StyleStatsCount = len(snap.StyleStats)
+	ruleCounts := map[string]int{}
+	for _, stats := range snap.StyleStats {
+		if stats == nil {
+			continue
+		}
+		st.AIHotspotCount += len(stats.Hotspots)
+		for _, hotspot := range stats.Hotspots {
+			ruleCounts[hotspot.RuleID]++
+		}
+	}
+	if len(ruleCounts) > 0 {
+		var topRule string
+		var topCount int
+		for rule, count := range ruleCounts {
+			if count > topCount || (count == topCount && rule < topRule) {
+				topRule = rule
+				topCount = count
+			}
+		}
+		st.TopAIHotspotRule = topRule
 	}
 
 	// 伏笔统计

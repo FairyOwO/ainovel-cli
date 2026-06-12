@@ -5,6 +5,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/voocel/ainovel-cli/internal/domain"
 )
 
 // ChronicLowDimension 检测某评审维度跨多章持续低分。
@@ -239,6 +241,259 @@ func WordCountAnomaly(snap *Snapshot) []Finding {
 		Evidence:   strings.Join(anomalies, "; "),
 		Suggestion: "极短章节可能是输出截断（token 限制），极长章节可能消耗过多上下文窗口。检查模型 max_tokens 配置。",
 	}}
+}
+
+// AIFlavorHotspots reports repeated transparent style-stat signals.
+func AIFlavorHotspots(snap *Snapshot) []Finding {
+	if len(snap.StyleStats) == 0 {
+		return nil
+	}
+	type hotspotEvidence struct {
+		chapter int
+		ruleID  string
+		text    string
+	}
+	counts := map[string]int{}
+	var samples []hotspotEvidence
+	for ch, stats := range snap.StyleStats {
+		if stats == nil {
+			continue
+		}
+		for _, hotspot := range stats.Hotspots {
+			if hotspot.RuleID == "" {
+				continue
+			}
+			counts[hotspot.RuleID]++
+			if len(samples) < 5 {
+				evidence := strings.TrimSpace(hotspot.Evidence)
+				if evidence == "" {
+					evidence = hotspot.Message
+				}
+				samples = append(samples, hotspotEvidence{chapter: ch, ruleID: hotspot.RuleID, text: evidence})
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	var total int
+	topRule := ""
+	topCount := 0
+	for rule, count := range counts {
+		total += count
+		if count > topCount || (count == topCount && rule < topRule) {
+			topRule = rule
+			topCount = count
+		}
+	}
+	if total < 3 && topCount < 2 {
+		return nil
+	}
+	sort.Slice(samples, func(i, j int) bool {
+		if samples[i].chapter == samples[j].chapter {
+			return samples[i].ruleID < samples[j].ruleID
+		}
+		return samples[i].chapter < samples[j].chapter
+	})
+	parts := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		parts = append(parts, fmt.Sprintf("ch%d:%s=%q", sample.chapter, sample.ruleID, truncateEvidence(sample.text, 24)))
+	}
+	severity := SevInfo
+	if topCount >= 3 || total >= 6 {
+		severity = SevWarning
+	}
+	return []Finding{{
+		Rule:       "AIFlavorHotspots",
+		Category:   CatQuality,
+		Severity:   severity,
+		Confidence: ConfMedium,
+		AutoLevel:  AutoNone,
+		Target:     "prompt.writer",
+		Title:      fmt.Sprintf("AI 味热点集中：%s ×%d", topRule, topCount),
+		Evidence:   fmt.Sprintf("style_stats 共 %d 个热点；样例: %s", total, strings.Join(parts, "; ")),
+		Suggestion: "检查 Writer 去 AI 味约束和 StyleCard；优先按 review issue targets 做局部 spot-fix，不要因单项指标直接整章重写。",
+	}}
+}
+
+// RewriteEffectiveness reports polish/rewrite attempts whose style signals did not improve.
+func RewriteEffectiveness(snap *Snapshot) []Finding {
+	if len(snap.StyleRewriteComparisons) == 0 {
+		return nil
+	}
+	var findings []Finding
+	for _, comparison := range snap.StyleRewriteComparisons {
+		if comparison.Chapter <= 0 {
+			continue
+		}
+		worsened := len(comparison.WorsenedMetrics)
+		unchanged := len(comparison.UnchangedMetrics)
+		improved := len(comparison.ImprovedMetrics)
+		if improved > 0 && worsened == 0 {
+			continue
+		}
+		if worsened < 2 && !(improved == 0 && unchanged >= 3) {
+			continue
+		}
+		severity := SevInfo
+		if worsened >= 2 {
+			severity = SevWarning
+		}
+		findings = append(findings, Finding{
+			Rule:       "RewriteEffectiveness",
+			Category:   CatQuality,
+			Severity:   severity,
+			Confidence: ConfMedium,
+			AutoLevel:  AutoNone,
+			Target:     "prompt.writer",
+			Title:      fmt.Sprintf("第 %d 章%s后风格指标未改善", comparison.Chapter, rewriteModeLabel(comparison.Mode)),
+			Evidence:   formatRewriteEffectivenessEvidence(comparison),
+			Suggestion: "检查 rewrite_brief 是否引用了 style_stats.hotspots，Writer 是否只改了表面文本但未处理热点；必要时让 Editor issue targets 更具体。",
+		})
+	}
+	return findings
+}
+
+// EditorConsistency reports accepted chapters whose observable style signals keep degrading.
+func EditorConsistency(snap *Snapshot) []Finding {
+	if len(snap.Reviews) < 3 || len(snap.StyleStats) < 3 {
+		return nil
+	}
+	chapters := sortedChapterReviews(snap)
+	var chain []int
+	checkChain := func() []Finding {
+		if len(chain) < 3 {
+			return nil
+		}
+		degradations := styleTrendDegradations(chain, snap.StyleStats)
+		if len(degradations) < 2 {
+			return nil
+		}
+		return []Finding{{
+			Rule:       "EditorConsistency",
+			Category:   CatQuality,
+			Severity:   SevWarning,
+			Confidence: ConfLow,
+			AutoLevel:  AutoNone,
+			Target:     "prompt.editor",
+			Title:      fmt.Sprintf("连续 accept 但风格指标恶化（%d 章）", len(chain)),
+			Evidence:   fmt.Sprintf("章节: %s；趋势: %s", formatChapterList(chain), strings.Join(degradations, "; ")),
+			Suggestion: "校准 Editor aesthetic 维度：accept 前应核对 working_memory.style_stats 的热点趋势，避免审美阈值与可观测事实脱节。",
+		}}
+	}
+	for _, ch := range chapters {
+		review := snap.Reviews[ch]
+		if review == nil || review.Scope != "chapter" || review.Verdict != "accept" || snap.StyleStats[ch] == nil {
+			if findings := checkChain(); len(findings) > 0 {
+				return findings
+			}
+			chain = chain[:0]
+			continue
+		}
+		chain = append(chain, ch)
+	}
+	return checkChain()
+}
+
+func rewriteModeLabel(mode string) string {
+	switch mode {
+	case "polish":
+		return "打磨"
+	case "rewrite":
+		return "重写"
+	default:
+		return "返工"
+	}
+}
+
+func formatRewriteEffectivenessEvidence(comparison domain.StyleRewriteComparison) string {
+	parts := []string{fmt.Sprintf("mode=%s", comparison.Mode)}
+	if len(comparison.ImprovedMetrics) > 0 {
+		parts = append(parts, "改善="+strings.Join(comparison.ImprovedMetrics, ","))
+	}
+	if len(comparison.WorsenedMetrics) > 0 {
+		parts = append(parts, "恶化="+strings.Join(comparison.WorsenedMetrics, ","))
+	}
+	if len(comparison.UnchangedMetrics) > 0 {
+		parts = append(parts, "无变化="+strings.Join(comparison.UnchangedMetrics, ","))
+	}
+	if len(comparison.Deltas) > 0 {
+		keys := make([]string, 0, len(comparison.Deltas))
+		for key := range comparison.Deltas {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var deltas []string
+		for _, key := range keys {
+			deltas = append(deltas, fmt.Sprintf("%s=%.2f", key, comparison.Deltas[key]))
+		}
+		parts = append(parts, "delta="+strings.Join(deltas, ","))
+	}
+	return strings.Join(parts, "；")
+}
+
+func styleTrendDegradations(chapters []int, stats map[int]*domain.StyleStats) []string {
+	type trendMetric struct {
+		key    string
+		label  string
+		better int
+	}
+	metrics := []trendMetric{
+		{key: "sentence_length_stddev", label: "句长标准差下降", better: 1},
+		{key: "sentence_start_unique_rate", label: "句首独特率下降", better: 1},
+		{key: "pattern_density_per_1000", label: "套话密度上升", better: -1},
+		{key: "paragraph_uniform_ratio", label: "段落均匀度上升", better: -1},
+	}
+	var out []string
+	first := stats[chapters[0]]
+	last := stats[chapters[len(chapters)-1]]
+	if first == nil || last == nil {
+		return nil
+	}
+	for _, metric := range metrics {
+		firstValue, firstOK := metricValue(first, metric.key)
+		lastValue, lastOK := metricValue(last, metric.key)
+		if !firstOK || !lastOK {
+			continue
+		}
+		delta := lastValue - firstValue
+		if metric.better > 0 && delta < -0.05 {
+			out = append(out, fmt.Sprintf("%s %.2f→%.2f", metric.label, firstValue, lastValue))
+		}
+		if metric.better < 0 && delta > 0.05 {
+			out = append(out, fmt.Sprintf("%s %.2f→%.2f", metric.label, firstValue, lastValue))
+		}
+	}
+	firstHotspots := len(first.Hotspots)
+	lastHotspots := len(last.Hotspots)
+	if lastHotspots-firstHotspots >= 2 {
+		out = append(out, fmt.Sprintf("热点数量上升 %d→%d", firstHotspots, lastHotspots))
+	}
+	return out
+}
+
+func metricValue(stats *domain.StyleStats, key string) (float64, bool) {
+	if stats == nil || stats.Metrics == nil {
+		return 0, false
+	}
+	metric, ok := stats.Metrics[key]
+	return metric.Value, ok
+}
+
+func formatChapterList(chapters []int) string {
+	parts := make([]string, 0, len(chapters))
+	for _, ch := range chapters {
+		parts = append(parts, fmt.Sprintf("ch%d", ch))
+	}
+	return strings.Join(parts, ",")
+}
+
+func truncateEvidence(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func sortedChapterReviews(snap *Snapshot) []int {

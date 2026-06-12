@@ -410,7 +410,13 @@ output/novel/meta/benchmarks/{name}.json
 
 ### 去 AI 味与自定义规则
 
-内置一份去 AI 味基线（`assets/` 下，出厂默认）：机械黑名单 `rules/default.md`（套句 / 疲劳词，commit 时确定性检查）+ 语义判据 `references/anti-ai-tone.md`（注入 writer / editor 规避与举证）。
+内置一份去 AI 味基线（`assets/` 下，出厂默认）：机械黑名单 `rules/default.md`（套句 / 疲劳词，commit 时确定性检查）+ 语义判据 `references/anti-ai-tone.md`（注入 writer / editor 规避与举证）+ 章节级 `style_stats`（句长变化、段落均匀度、对白比例、句首重复、套话热点等确定性统计）。
+
+`commit_chapter` 会在提交终稿时返回并落盘 `meta/stats/chapter_N.json`。这些统计只提供证据和定位，不会直接决定 `accept` / `polish` / `rewrite`；Editor 仍必须结合原文和叙事功能判断。返工提交会额外把前后指标对比追加到 `meta/stats/rewrite_comparisons.jsonl`，供 `/diag` 判断 polish/rewrite 是否真正改善了热点。`novel_context` 会把当前章的压缩摘要和高优先级热点注入 `working_memory.style_stats`，返工时还会提供草稿与终稿的对比摘要，Writer 优先按热点做局部 `edit_chapter` spot-fix。
+
+弧级总结可以把已写章节沉淀成 `style_rules.style_card`，作为项目级文风卡注入 `reference_pack.style_card`。它记录本书的量化目标和禁忌（如句长标准差下限、对白比例目标、段落变化目标、感官偏好、角色对白 DNA、章型指标范围、章末策略、禁用套话），优先级低于用户规则和当前章节契约，高于通用去 AI 味参考。
+
+`/diag` 会读取已落盘的 `style_stats` 和返工对比记录，汇总 AI 味热点和高频规则，提示无效返工，并在连续 accept 但指标恶化时提醒校准 Editor 标准，帮助判断是局部套话、节奏过整、对白失衡，还是 Writer/Editor 标准需要校准。
 
 想叠加自己的偏好**无需改源码**：在 `~/.ainovel/rules/` 目录（全局，放任意 `.md`，按文件名字典序合并）或项目根 `./rules.md`（本书）里，**用大白话写偏好即可**（如「主角别写成圣母」「多用身体感知」），editor 会按语义审阅——零格式、零 YAML。想要「字数 / 禁词」这类硬性确定检查，再**可选地**在文件顶部加一段 front matter。就近覆盖、与内置基线叠加生效；完整字段见 [`rules.md.example`](rules.md.example)。
 

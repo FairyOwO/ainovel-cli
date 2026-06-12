@@ -12,22 +12,24 @@ import (
 // Snapshot 是对 output 目录全部工件的只读快照。
 // 所有规则函数只接收 Snapshot，不直接访问文件系统。
 type Snapshot struct {
-	Progress      *domain.Progress
-	RunMeta       *domain.RunMeta
-	Compass       *domain.StoryCompass
-	Outline       []domain.OutlineEntry
-	Volumes       []domain.VolumeOutline
-	Characters    []domain.Character
-	CastLedger    []domain.CastEntry
-	WorldRules    []domain.WorldRule
-	Timeline      []domain.TimelineEvent
-	Foreshadow    []domain.ForeshadowEntry
-	Relationships []domain.RelationshipEntry
-	StateChanges  []domain.StateChange
-	StyleRules    *domain.WritingStyleRules
-	Reviews       map[int]*domain.ReviewEntry
-	Plans         map[int]*domain.ChapterPlan
-	Summaries     map[int]*domain.ChapterSummary
+	Progress                *domain.Progress
+	RunMeta                 *domain.RunMeta
+	Compass                 *domain.StoryCompass
+	Outline                 []domain.OutlineEntry
+	Volumes                 []domain.VolumeOutline
+	Characters              []domain.Character
+	CastLedger              []domain.CastEntry
+	WorldRules              []domain.WorldRule
+	Timeline                []domain.TimelineEvent
+	Foreshadow              []domain.ForeshadowEntry
+	Relationships           []domain.RelationshipEntry
+	StateChanges            []domain.StateChange
+	StyleRules              *domain.WritingStyleRules
+	Reviews                 map[int]*domain.ReviewEntry
+	Plans                   map[int]*domain.ChapterPlan
+	Summaries               map[int]*domain.ChapterSummary
+	StyleStats              map[int]*domain.StyleStats
+	StyleRewriteComparisons []domain.StyleRewriteComparison
 
 	LoadErrors []string // 非 NotExist 的加载失败，区分"无数据"和"读取出错"
 }
@@ -36,9 +38,10 @@ type Snapshot struct {
 // 文件不存在视为"无数据"（字段保持零值）；其他错误记录到 LoadErrors。
 func Load(s *store.Store) Snapshot {
 	snap := Snapshot{
-		Reviews:   make(map[int]*domain.ReviewEntry),
-		Plans:     make(map[int]*domain.ChapterPlan),
-		Summaries: make(map[int]*domain.ChapterSummary),
+		Reviews:    make(map[int]*domain.ReviewEntry),
+		Plans:      make(map[int]*domain.ChapterPlan),
+		Summaries:  make(map[int]*domain.ChapterSummary),
+		StyleStats: make(map[int]*domain.StyleStats),
 	}
 
 	check := func(name string, err error) {
@@ -74,6 +77,8 @@ func Load(s *store.Store) Snapshot {
 	check("state_changes", err)
 	snap.StyleRules, err = s.World.LoadStyleRules()
 	check("style_rules", err)
+	snap.StyleRewriteComparisons, err = s.World.LoadStyleRewriteComparisons()
+	check("style_rewrite_comparisons", err)
 
 	if snap.Progress != nil {
 		for _, ch := range snap.Progress.CompletedChapters {
@@ -91,6 +96,11 @@ func Load(s *store.Store) Snapshot {
 				snap.Reviews[ch] = review
 			} else {
 				check(fmt.Sprintf("review_ch%d", ch), err)
+			}
+			if stats, err := s.World.LoadStyleStats(ch); err == nil && stats != nil {
+				snap.StyleStats[ch] = stats
+			} else {
+				check(fmt.Sprintf("style_stats_ch%d", ch), err)
 			}
 		}
 	}

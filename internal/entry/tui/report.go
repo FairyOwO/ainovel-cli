@@ -128,6 +128,15 @@ func renderReportText(report diag.Report, width int, exportPath string, startedA
 		b.WriteString(fmt.Sprintf("%.1f", st.AvgReviewScore))
 	}
 	b.WriteString("\n")
+	if st.StyleStatsCount > 0 {
+		b.WriteString(mutedStyle.Render("AI味统计 "))
+		b.WriteString(fmt.Sprintf("%d章/%d热点", st.StyleStatsCount, st.AIHotspotCount))
+		if st.TopAIHotspotRule != "" {
+			b.WriteString(dimStyle.Render("  高频 "))
+			b.WriteString(st.TopAIHotspotRule)
+		}
+		b.WriteString("\n")
+	}
 
 	// 第三行：伏笔 + 规划
 	if st.ForeshadowOpen > 0 || st.ForeshadowStale > 0 {

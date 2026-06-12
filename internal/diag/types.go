@@ -83,6 +83,9 @@ type Stats struct {
 	ReviewCount       int
 	RewriteCount      int
 	AvgReviewScore    float64
+	StyleStatsCount   int
+	AIHotspotCount    int
+	TopAIHotspotRule  string
 	ForeshadowOpen    int
 	ForeshadowStale   int
 }
