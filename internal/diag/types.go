@@ -73,21 +73,24 @@ type Action struct {
 
 // Stats 是与发现并列展示的概览指标。
 type Stats struct {
-	CompletedChapters int
-	TotalChapters     int
-	TotalWords        int
-	AvgWordsPerCh     int
-	Phase             string
-	Flow              string
-	PlanningTier      string
-	ReviewCount       int
-	RewriteCount      int
-	AvgReviewScore    float64
-	StyleStatsCount   int
-	AIHotspotCount    int
-	TopAIHotspotRule  string
-	ForeshadowOpen    int
-	ForeshadowStale   int
+	CompletedChapters   int
+	TotalChapters       int
+	TotalWords          int
+	AvgWordsPerCh       int
+	Phase               string
+	Flow                string
+	PlanningTier        string
+	ReviewCount         int
+	RewriteCount        int
+	AvgReviewScore      float64
+	StyleStatsCount     int
+	AIHotspotCount      int
+	TopAIHotspotRule    string
+	EmotionLabelAlerts  int
+	SentenceStartAlerts int
+	LowEditRewriteCount int
+	ForeshadowOpen      int
+	ForeshadowStale     int
 }
 
 // Report 是一次诊断运行的完整输出。

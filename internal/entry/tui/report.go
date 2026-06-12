@@ -135,6 +135,18 @@ func renderReportText(report diag.Report, width int, exportPath string, startedA
 			b.WriteString(dimStyle.Render("  高频 "))
 			b.WriteString(st.TopAIHotspotRule)
 		}
+		if st.EmotionLabelAlerts > 0 {
+			b.WriteString(dimStyle.Render("  情绪标签 "))
+			b.WriteString(fmt.Sprintf("%d章", st.EmotionLabelAlerts))
+		}
+		if st.SentenceStartAlerts > 0 {
+			b.WriteString(dimStyle.Render("  句首固化 "))
+			b.WriteString(fmt.Sprintf("%d章", st.SentenceStartAlerts))
+		}
+		if st.LowEditRewriteCount > 0 {
+			b.WriteString(dimStyle.Render("  低改动返工 "))
+			b.WriteString(fmt.Sprintf("%d次", st.LowEditRewriteCount))
+		}
 		b.WriteString("\n")
 	}
 

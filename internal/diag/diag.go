@@ -38,6 +38,7 @@ var allRules = []RuleFunc{
 	ExcessiveRewrites,
 	WordCountAnomaly,
 	AIFlavorHotspots,
+	MetricStyleSignals,
 	RewriteEffectiveness,
 	EditorConsistency,
 	// Planning
@@ -124,8 +125,19 @@ func buildStats(snap *Snapshot) Stats {
 			continue
 		}
 		st.AIHotspotCount += len(stats.Hotspots)
+		if value, ok := metricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+			st.EmotionLabelAlerts++
+		}
+		if value, ok := metricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+			st.SentenceStartAlerts++
+		}
 		for _, hotspot := range stats.Hotspots {
 			ruleCounts[hotspot.RuleID]++
+		}
+	}
+	for _, comparison := range snap.StyleRewriteComparisons {
+		if comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08 {
+			st.LowEditRewriteCount++
 		}
 	}
 	if len(ruleCounts) > 0 {

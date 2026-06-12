@@ -329,14 +329,19 @@ func RewriteEffectiveness(snap *Snapshot) []Finding {
 		worsened := len(comparison.WorsenedMetrics)
 		unchanged := len(comparison.UnchangedMetrics)
 		improved := len(comparison.ImprovedMetrics)
+		lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08
 		if improved > 0 && worsened == 0 {
-			continue
+			if !lowEdit {
+				continue
+			}
 		}
-		if worsened < 2 && !(improved == 0 && unchanged >= 3) {
-			continue
+		if !lowEdit {
+			if worsened < 2 && !(improved == 0 && unchanged >= 3) {
+				continue
+			}
 		}
 		severity := SevInfo
-		if worsened >= 2 {
+		if worsened >= 2 || lowEdit {
 			severity = SevWarning
 		}
 		findings = append(findings, Finding{
@@ -349,6 +354,52 @@ func RewriteEffectiveness(snap *Snapshot) []Finding {
 			Title:      fmt.Sprintf("第 %d 章%s后风格指标未改善", comparison.Chapter, rewriteModeLabel(comparison.Mode)),
 			Evidence:   formatRewriteEffectivenessEvidence(comparison),
 			Suggestion: "检查 rewrite_brief 是否引用了 style_stats.hotspots，Writer 是否只改了表面文本但未处理热点；必要时让 Editor issue targets 更具体。",
+		})
+	}
+	return findings
+}
+
+type metricSample struct {
+	chapter int
+	value   float64
+}
+
+// MetricStyleSignals reports deterministic metric-level AI-tone signals.
+func MetricStyleSignals(snap *Snapshot) []Finding {
+	var emotionSamples, startSamples []metricSample
+	for ch, stats := range snap.StyleStats {
+		if value, ok := metricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+			emotionSamples = append(emotionSamples, metricSample{chapter: ch, value: value})
+		}
+		if value, ok := metricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+			startSamples = append(startSamples, metricSample{chapter: ch, value: value})
+		}
+	}
+	var findings []Finding
+	if len(emotionSamples) >= 2 {
+		findings = append(findings, Finding{
+			Rule:       "EmotionLabelDensity",
+			Category:   CatQuality,
+			Severity:   SevWarning,
+			Confidence: ConfMedium,
+			AutoLevel:  AutoNone,
+			Target:     "prompt.writer",
+			Title:      fmt.Sprintf("情绪标签密度偏高（%d章）", len(emotionSamples)),
+			Evidence:   formatMetricSamples(emotionSamples, "hits/千字"),
+			Suggestion: "把紧张/愤怒/悲伤等标签改为身体反应、动作选择和环境压力；优先更新 anti-ai-tone Gate C 相关示例。",
+		})
+	}
+	if len(startSamples) >= 2 {
+		findings = append(findings, Finding{
+			Rule:       "SentenceStartDominance",
+			Category:   CatQuality,
+			Severity:   SevInfo,
+			Confidence: ConfMedium,
+			AutoLevel:  AutoNone,
+			Target:     "prompt.writer",
+			Title:      fmt.Sprintf("句首类别过于集中（%d章）", len(startSamples)),
+			Evidence:   formatMetricSamples(startSamples, "ratio"),
+			Suggestion: "让 Writer 按 working_memory.style_guidance 轮换对白、动作、感官、环境和无主语句开头，避免固定起手方式。",
 		})
 	}
 	return findings
@@ -408,6 +459,12 @@ func rewriteModeLabel(mode string) string {
 
 func formatRewriteEffectivenessEvidence(comparison domain.StyleRewriteComparison) string {
 	parts := []string{fmt.Sprintf("mode=%s", comparison.Mode)}
+	if comparison.EditDistanceRatio > 0 {
+		parts = append(parts, fmt.Sprintf("edit_distance_ratio=%.2f", comparison.EditDistanceRatio))
+	}
+	if comparison.ChangedRuneRatio > 0 {
+		parts = append(parts, fmt.Sprintf("changed_rune_ratio=%.2f", comparison.ChangedRuneRatio))
+	}
 	if len(comparison.ImprovedMetrics) > 0 {
 		parts = append(parts, "改善="+strings.Join(comparison.ImprovedMetrics, ","))
 	}
@@ -430,6 +487,18 @@ func formatRewriteEffectivenessEvidence(comparison domain.StyleRewriteComparison
 		parts = append(parts, "delta="+strings.Join(deltas, ","))
 	}
 	return strings.Join(parts, "；")
+}
+
+func formatMetricSamples(samples []metricSample, unit string) string {
+	sort.Slice(samples, func(i, j int) bool { return samples[i].chapter < samples[j].chapter })
+	if len(samples) > 5 {
+		samples = samples[:5]
+	}
+	parts := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		parts = append(parts, fmt.Sprintf("ch%d=%.2f%s", sample.chapter, sample.value, unit))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func styleTrendDegradations(chapters []int, stats map[int]*domain.StyleStats) []string {
