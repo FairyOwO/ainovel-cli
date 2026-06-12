@@ -87,23 +87,36 @@ func (t *CheckAIToneTool) loadAIToneSource(chapter int, source string) (string, 
 func buildAIToneResult(chapter int, source, content string, stats *domain.StyleStats) map[string]any {
 	findings := aiToneFindings(content, stats.Hotspots, 8)
 	decision, hardFail, warningCount := aiToneDecision(stats.Hotspots)
+	actionRecommendation := aiToneActionRecommendation(decision)
 	result := map[string]any{
-		"chapter":       chapter,
-		"source":        source,
-		"decision":      decision,
-		"hard_fail":     hardFail,
-		"summary":       stats.Summary,
-		"metrics":       compactStyleMetrics(stats),
-		"findings":      findings,
-		"warning_count": warningCount,
-		"advisory":      "工具只提供机械证据和局部 targets；是否修改、局部 polish 还是整章重写，必须结合剧情功能判断",
+		"chapter":               chapter,
+		"source":                source,
+		"decision":              decision,
+		"hard_fail":             hardFail,
+		"action_recommendation": actionRecommendation,
+		"summary":               stats.Summary,
+		"metrics":               compactStyleMetrics(stats),
+		"findings":              findings,
+		"warning_count":         warningCount,
+		"advisory":              "action_recommendation=pass 可继续；local_fix 表示优先按 targets 做局部修补；rewrite 表示硬门禁命中，需要重写或大幅改写后复检。最终仍需结合剧情功能判断",
 	}
 	if len(findings) > 0 {
-		result["next_step"] = aiToneNextStep(hardFail)
+		result["next_step"] = aiToneNextStep(actionRecommendation)
 	} else {
 		result["next_step"] = "未发现高优先级机械 AI 味热点；若一致性检查也通过，可继续 commit_chapter"
 	}
 	return result
+}
+
+func aiToneActionRecommendation(decision string) string {
+	switch decision {
+	case "hard_fail":
+		return "rewrite"
+	case "warning":
+		return "local_fix"
+	default:
+		return "pass"
+	}
 }
 
 func aiToneDecision(hotspots []domain.StyleHotspot) (string, bool, int) {
@@ -152,11 +165,15 @@ func aiToneHasConcentratedHotspots(severeRules map[string]int, severityByRule ma
 	return concentratedSignals >= 3
 }
 
-func aiToneNextStep(hardFail bool) string {
-	if hardFail {
-		return "AI 味硬门禁命中：优先按 findings.targets 局部修；若多处结构性模板化，再用 draft_chapter(mode=write) 覆盖重写，然后重新 check_consistency 与 check_ai_tone"
+func aiToneNextStep(actionRecommendation string) string {
+	switch actionRecommendation {
+	case "rewrite":
+		return "AI 味硬门禁命中：用 draft_chapter(mode=write) 重写或大幅改写后，重新 check_consistency 与 check_ai_tone"
+	case "local_fix":
+		return "发现可疑机械信号：优先按 findings.targets 做 1-3 处局部修补；初稿用 draft_chapter(mode=write) 覆盖修补，返工场景可用 edit_chapter，然后重新 check_ai_tone"
+	default:
+		return "未发现高优先级机械 AI 味热点；若一致性检查也通过，可继续 commit_chapter"
 	}
-	return "发现可疑机械信号：结合剧情功能判断是否局部 edit_chapter；若保留原句服务叙事，可记录判断后继续 commit_chapter"
 }
 
 func aiToneFindings(content string, hotspots []domain.StyleHotspot, limit int) []map[string]any {

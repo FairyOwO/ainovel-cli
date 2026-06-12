@@ -30,6 +30,9 @@ func TestCheckAIToneDraftReturnsCompactFindings(t *testing.T) {
 	if out["decision"] != "hard_fail" || out["hard_fail"] != true {
 		t.Fatalf("expected hard_fail, got %v", out)
 	}
+	if out["action_recommendation"] != "rewrite" {
+		t.Fatalf("expected rewrite recommendation, got %v", out["action_recommendation"])
+	}
 	if _, hasContent := out["content"]; hasContent {
 		t.Fatalf("check_ai_tone must not return full prose: %v", out)
 	}
@@ -95,6 +98,45 @@ func TestCheckAIToneReadsFinalSource(t *testing.T) {
 	}
 	if out["source"] != "final" || out["chapter"] != float64(3) {
 		t.Fatalf("unexpected output: %v", out)
+	}
+}
+
+func TestCheckAIToneWarningRecommendsLocalFix(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(4, "然而，雨停了。桌上的灯晃了一下。她问去哪。风从门缝里钻进来，门外有人咳嗽了一声。"); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]any{"chapter": 4, "source": "draft"})
+	raw, err := NewCheckAIToneTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out["decision"] != "warning" || out["hard_fail"] != false {
+		t.Fatalf("expected warning without hard_fail, got %v", out)
+	}
+	if out["action_recommendation"] != "local_fix" {
+		t.Fatalf("expected local_fix recommendation, got %v", out["action_recommendation"])
+	}
+}
+
+func TestAIToneActionRecommendation(t *testing.T) {
+	cases := map[string]string{
+		"pass":      "pass",
+		"warning":   "local_fix",
+		"hard_fail": "rewrite",
+	}
+	for decision, want := range cases {
+		if got := aiToneActionRecommendation(decision); got != want {
+			t.Fatalf("decision %q: got %q want %q", decision, got, want)
+		}
 	}
 }
 
