@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -125,10 +126,10 @@ func buildStats(snap *Snapshot) Stats {
 			continue
 		}
 		st.AIHotspotCount += len(stats.Hotspots)
-		if value, ok := metricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+		if value, ok := metricValue(stats, domain.StyleMetricEmotionLabelDensityPer1000); ok && value >= domain.StyleThresholdEmotionLabelDensity {
 			st.EmotionLabelAlerts++
 		}
-		if value, ok := metricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+		if value, ok := metricValue(stats, domain.StyleMetricSentenceStartDominantCategoryRatio); ok && value >= domain.StyleThresholdSentenceStartDominantRatio {
 			st.SentenceStartAlerts++
 		}
 		for _, hotspot := range stats.Hotspots {
@@ -136,7 +137,7 @@ func buildStats(snap *Snapshot) Stats {
 		}
 	}
 	for _, comparison := range snap.StyleRewriteComparisons {
-		if comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08 {
+		if comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < domain.StyleThresholdLowEditDistanceRatio {
 			st.LowEditRewriteCount++
 		}
 	}

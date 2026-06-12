@@ -561,14 +561,14 @@ func compactStyleMetrics(stats *domain.StyleStats) map[string]float64 {
 		return nil
 	}
 	keys := []string{
-		"sentence_length_stddev",
-		"paragraph_uniform_ratio",
+		domain.StyleMetricSentenceLengthStddev,
+		domain.StyleMetricParagraphUniformRatio,
 		"dialogue_ratio",
-		"sentence_start_unique_rate",
-		"sentence_start_dominant_category_ratio",
-		"sentence_start_abstract_connector_ratio",
-		"emotion_label_density_per_1000",
-		"pattern_density_per_1000",
+		domain.StyleMetricSentenceStartUniqueRate,
+		domain.StyleMetricSentenceStartDominantCategoryRatio,
+		domain.StyleMetricSentenceStartAbstractConnectorRatio,
+		domain.StyleMetricEmotionLabelDensityPer1000,
+		domain.StyleMetricPatternDensityPer1000,
 	}
 	out := make(map[string]float64, len(keys))
 	for _, key := range keys {
@@ -635,16 +635,16 @@ func compactFingerprint(fp *stylestat.Fingerprint) map[string]any {
 func styleGuidance(chapterStats map[string]any, bookStats map[string]any) []string {
 	var guidance []string
 	if metrics, ok := chapterStats["metrics"].(map[string]float64); ok {
-		if metrics["emotion_label_density_per_1000"] >= 6 {
+		if metrics[domain.StyleMetricEmotionLabelDensityPer1000] >= domain.StyleThresholdEmotionLabelDensity {
 			guidance = append(guidance, "情绪标签偏高：删掉紧张/愤怒/悲伤等标签，改用身体反应、动作和选择呈现。")
 		}
-		if metrics["sentence_start_dominant_category_ratio"] >= 0.55 {
+		if metrics[domain.StyleMetricSentenceStartDominantCategoryRatio] >= domain.StyleThresholdSentenceStartDominantRatio {
 			guidance = append(guidance, "句首类别过于集中：下一轮刻意轮换动作、对白、感官、环境和无主语句开头。")
 		}
-		if metrics["sentence_start_abstract_connector_ratio"] >= 0.3 {
+		if metrics[domain.StyleMetricSentenceStartAbstractConnectorRatio] >= domain.StyleThresholdAbstractConnectorRatio {
 			guidance = append(guidance, "抽象/连接词起句偏多：少用然而/与此同时/这时，直接切入动作或对白。")
 		}
-		if metrics["paragraph_uniform_ratio"] > 0.8 || metrics["sentence_length_stddev"] <= 3 {
+		if metrics[domain.StyleMetricParagraphUniformRatio] > domain.StyleThresholdParagraphUniformRatio || metrics[domain.StyleMetricSentenceLengthStddev] <= domain.StyleThresholdLowSentenceStddev {
 			guidance = append(guidance, "节奏过整：提高长短句和段落落差，temperature_hint=raise_variety。")
 		}
 	}
@@ -731,7 +731,7 @@ func styleSeverityRank(severity string) int {
 
 func compareStyleStats(finalStats, draftStats *domain.StyleStats) map[string]float64 {
 	// Keep this prompt-facing comparison smaller than the durable rewrite comparison.
-	keys := []string{"sentence_length_stddev", "dialogue_ratio", "sentence_start_unique_rate", "pattern_density_per_1000"}
+	keys := []string{domain.StyleMetricSentenceLengthStddev, "dialogue_ratio", domain.StyleMetricSentenceStartUniqueRate, domain.StyleMetricPatternDensityPer1000}
 	out := make(map[string]float64, len(keys))
 	for _, key := range keys {
 		finalMetric, finalOK := finalStats.Metrics[key]

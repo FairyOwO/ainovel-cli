@@ -329,7 +329,7 @@ func RewriteEffectiveness(snap *Snapshot) []Finding {
 		worsened := len(comparison.WorsenedMetrics)
 		unchanged := len(comparison.UnchangedMetrics)
 		improved := len(comparison.ImprovedMetrics)
-		lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08
+		lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < domain.StyleThresholdLowEditDistanceRatio
 		if improved > 0 && worsened == 0 {
 			if !lowEdit {
 				continue
@@ -368,10 +368,10 @@ type metricSample struct {
 func MetricStyleSignals(snap *Snapshot) []Finding {
 	var emotionSamples, startSamples []metricSample
 	for ch, stats := range snap.StyleStats {
-		if value, ok := metricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+		if value, ok := metricValue(stats, domain.StyleMetricEmotionLabelDensityPer1000); ok && value >= domain.StyleThresholdEmotionLabelDensity {
 			emotionSamples = append(emotionSamples, metricSample{chapter: ch, value: value})
 		}
-		if value, ok := metricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+		if value, ok := metricValue(stats, domain.StyleMetricSentenceStartDominantCategoryRatio); ok && value >= domain.StyleThresholdSentenceStartDominantRatio {
 			startSamples = append(startSamples, metricSample{chapter: ch, value: value})
 		}
 	}

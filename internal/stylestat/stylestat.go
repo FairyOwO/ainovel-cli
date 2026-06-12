@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/voocel/ainovel-cli/internal/domain"
 )
 
 // minChapters 少于此章数不出统计——样本太小，频率没有意义。
@@ -342,10 +344,6 @@ func titleFormats(titles []string) *TitleStat {
 	return t
 }
 
-var functionWords = []string{"的", "了", "是", "在", "和", "就", "也", "都", "还", "又", "把", "被", "他", "她", "它", "我", "你", "这", "那"}
-
-var emotionLabels = []string{"紧张", "愤怒", "悲伤", "恐惧", "害怕", "焦虑", "绝望", "震惊", "惊讶", "痛苦", "难过", "不安", "委屈", "兴奋", "激动", "羞愧", "尴尬", "五味杂陈"}
-
 func fingerprint(chapters []string) *Fingerprint {
 	if len(chapters) == 0 {
 		return nil
@@ -380,8 +378,8 @@ func functionWordFreq(text string) map[string]float64 {
 	if total == 0 {
 		return nil
 	}
-	out := make(map[string]float64, len(functionWords))
-	for _, word := range functionWords {
+	out := make(map[string]float64, len(domain.FunctionWords))
+	for _, word := range domain.FunctionWords {
 		count := strings.Count(text, word)
 		if count > 0 {
 			out[word] = round3(float64(count) / float64(total))
@@ -395,7 +393,7 @@ func startCategoryRatios(chapters []string) map[string]float64 {
 	total := 0
 	for _, chapter := range chapters {
 		for _, sentence := range sentenceSplit.Split(chapter, -1) {
-			category := startCategory(strings.TrimSpace(sentence))
+			category := domain.CategorizeSentenceStart(sentence)
 			if category == "" {
 				continue
 			}
@@ -413,45 +411,13 @@ func startCategoryRatios(chapters []string) map[string]float64 {
 	return out
 }
 
-func startCategory(text string) string {
-	if text == "" {
-		return ""
-	}
-	if strings.HasPrefix(text, "“") || strings.HasPrefix(text, "\"") || strings.HasPrefix(text, "「") || strings.HasPrefix(text, "『") {
-		return "dialogue"
-	}
-	if hasPrefix(text, []string{"然而", "与此同时", "此时", "这时", "可是", "但是", "随后", "于是", "后来", "终于", "忽然", "突然"}) {
-		return "abstract_connector"
-	}
-	if hasPrefix(text, []string{"夜里", "夜色", "清晨", "黎明", "天亮", "晨光", "黄昏", "雨里", "雨声", "门外", "窗外", "街上", "屋里", "院中"}) {
-		return "time_place"
-	}
-	first := []rune(text)[0]
-	if strings.ContainsRune("他她它我你", first) {
-		return "pronoun"
-	}
-	if strings.ContainsRune("走站坐伸抬低握推拉看看听问说笑转拿放踩奔跑躲捡撕扔", first) {
-		return "action"
-	}
-	return "other"
-}
-
-func hasPrefix(text string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(text, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 func emotionLabelDensity(text string) float64 {
 	total := chineseRuneCount(text)
 	if total == 0 {
 		return 0
 	}
 	count := 0
-	for _, label := range emotionLabels {
+	for _, label := range domain.EmotionLabels {
 		count += strings.Count(text, label)
 	}
 	return round2(float64(count) * 1000 / float64(total))
