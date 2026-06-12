@@ -27,9 +27,9 @@ func TestComputePatterns(t *testing.T) {
 		t.Fatal("expected stats")
 	}
 	want := map[string]int{
-		"矫正句『不是…(而)是…』":          6,
-		"计时量词『X息/X瞬』":            6,
-		"明喻『像一/仿佛/如同/宛如』":        6,
+		"矫正句『不是…(而)是…』":       6,
+		"计时量词『X息/X瞬』":         6,
+		"明喻『像一/仿佛/如同/宛如』":     6,
 		"沉默节拍『沉默了/没有说话/没有回头』": 6,
 	}
 	for _, p := range s.Patterns {
@@ -129,5 +129,26 @@ func TestComputeTitleFormats(t *testing.T) {
 	s = Compute(Input{Chapters: chapters, Titles: []string{"风起", "云涌"}})
 	if s.TitleFormats != nil {
 		t.Errorf("uniform titles should not report: %+v", s.TitleFormats)
+	}
+}
+
+func TestComputeFingerprintDrift(t *testing.T) {
+	chapters := []string{
+		chapterWith("他推开门。他没有回头。他把灯吹灭。"),
+		chapterWith("他站在雨里。他听见脚步。他握紧刀。"),
+		chapterWith("她坐在窗边。她低声说话。她把信折好。"),
+		chapterWith("我看见灯火。我听见雨声。我没有说话。"),
+		chapterWith("然而众人十分紧张。与此同时，他感到愤怒。可是她很恐惧。"),
+		chapterWith("然而风声停了。与此同时灯火亮起。可是门外没有人。"),
+	}
+	s := Compute(Input{Chapters: chapters})
+	if s == nil || s.Fingerprint == nil {
+		t.Fatalf("expected fingerprint stats, got %+v", s)
+	}
+	if s.Fingerprint.DominantStartCategory == "" {
+		t.Fatalf("expected dominant start category, got %+v", s.Fingerprint)
+	}
+	if s.Fingerprint.EmotionLabelDensity == 0 {
+		t.Fatalf("expected emotion label density, got %+v", s.Fingerprint)
 	}
 }

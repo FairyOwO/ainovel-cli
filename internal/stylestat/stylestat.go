@@ -2,7 +2,7 @@
 //
 // 动机：弧内评审窗口（~10 章）对全书级模式固化天然失明——句式 tic 章均几十次、
 // 章末形态同构、跨章复读，单章看每处都"正常"，只有全书统计能暴露。统计归代码
-//（确定性、零幻觉），裁定归 LLM（editor 按数字判维度分，writer 据此自避免）。
+// （确定性、零幻觉），裁定归 LLM（editor 按数字判维度分，writer 据此自避免）。
 package stylestat
 
 import (
@@ -34,6 +34,23 @@ type Stats struct {
 	Ending            EndingStat     `json:"ending"`
 	OpeningTimeRate   float64        `json:"opening_time_rate"`
 	TitleFormats      *TitleStat     `json:"title_formats,omitempty"`
+	Fingerprint       *Fingerprint   `json:"fingerprint,omitempty"`
+}
+
+// Fingerprint captures compact whole-book prose fingerprints and recent drift.
+type Fingerprint struct {
+	RecentChapters             int                `json:"recent_chapters"`
+	BaselineChapters           int                `json:"baseline_chapters,omitempty"`
+	FunctionWordFreq           map[string]float64 `json:"function_word_freq,omitempty"`
+	RecentFunctionWordFreq     map[string]float64 `json:"recent_function_word_freq,omitempty"`
+	StartCategoryRatios        map[string]float64 `json:"start_category_ratios,omitempty"`
+	RecentStartCategoryRatios  map[string]float64 `json:"recent_start_category_ratios,omitempty"`
+	FunctionWordDrift          float64            `json:"function_word_drift,omitempty"`
+	StartCategoryDrift         float64            `json:"start_category_drift,omitempty"`
+	DominantStartCategory      string             `json:"dominant_start_category,omitempty"`
+	DominantStartCategoryRatio float64            `json:"dominant_start_category_ratio,omitempty"`
+	EmotionLabelDensity        float64            `json:"emotion_label_density_per_1000,omitempty"`
+	RecentEmotionLabelDensity  float64            `json:"recent_emotion_label_density_per_1000,omitempty"`
 }
 
 // PatternStat 固定句式模式类的全书计数（通用 AI 文风 tic）。
@@ -114,6 +131,7 @@ func Compute(in Input) *Stats {
 	s.Ending = endingShape(in.Chapters)
 	s.OpeningTimeRate = openingTimeRate(in.Chapters)
 	s.TitleFormats = titleFormats(in.Titles)
+	s.Fingerprint = fingerprint(in.Chapters)
 	return s
 }
 
@@ -200,7 +218,7 @@ func validGram(gram []rune) bool {
 }
 
 // stopwordBigrams 把专有名词拆成 2 字片段：人名常以部分形式入文
-//（"九渊负手"含"九渊"），按整名匹配会漏网。宁可过滤偏严——短语事实少一条
+// （"九渊负手"含"九渊"），按整名匹配会漏网。宁可过滤偏严——短语事实少一条
 // 无碍，人名混进口头禅清单才是噪声。
 func stopwordBigrams(stopwords []string) []string {
 	var grams []string
@@ -324,6 +342,165 @@ func titleFormats(titles []string) *TitleStat {
 	return t
 }
 
+var functionWords = []string{"的", "了", "是", "在", "和", "就", "也", "都", "还", "又", "把", "被", "他", "她", "它", "我", "你", "这", "那"}
+
+var emotionLabels = []string{"紧张", "愤怒", "悲伤", "恐惧", "害怕", "焦虑", "绝望", "震惊", "惊讶", "痛苦", "难过", "不安", "委屈", "兴奋", "激动", "羞愧", "尴尬", "五味杂陈"}
+
+func fingerprint(chapters []string) *Fingerprint {
+	if len(chapters) == 0 {
+		return nil
+	}
+	recent := recentWindow(chapters)
+	baseline := chapters
+	if len(chapters) > len(recent) {
+		baseline = chapters[:len(chapters)-len(recent)]
+	}
+	allText := strings.Join(chapters, "\n")
+	recentText := strings.Join(recent, "\n")
+	fp := &Fingerprint{
+		RecentChapters:            len(recent),
+		FunctionWordFreq:          functionWordFreq(allText),
+		RecentFunctionWordFreq:    functionWordFreq(recentText),
+		StartCategoryRatios:       startCategoryRatios(chapters),
+		RecentStartCategoryRatios: startCategoryRatios(recent),
+		EmotionLabelDensity:       emotionLabelDensity(allText),
+		RecentEmotionLabelDensity: emotionLabelDensity(recentText),
+	}
+	fp.DominantStartCategory, fp.DominantStartCategoryRatio = dominantRatio(fp.RecentStartCategoryRatios)
+	if len(baseline) > 0 && len(baseline) != len(chapters) {
+		fp.BaselineChapters = len(baseline)
+		fp.FunctionWordDrift = vectorDistance(functionWordFreq(strings.Join(baseline, "\n")), fp.RecentFunctionWordFreq)
+		fp.StartCategoryDrift = vectorDistance(startCategoryRatios(baseline), fp.RecentStartCategoryRatios)
+	}
+	return fp
+}
+
+func functionWordFreq(text string) map[string]float64 {
+	total := chineseRuneCount(text)
+	if total == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(functionWords))
+	for _, word := range functionWords {
+		count := strings.Count(text, word)
+		if count > 0 {
+			out[word] = round3(float64(count) / float64(total))
+		}
+	}
+	return out
+}
+
+func startCategoryRatios(chapters []string) map[string]float64 {
+	counts := map[string]int{}
+	total := 0
+	for _, chapter := range chapters {
+		for _, sentence := range sentenceSplit.Split(chapter, -1) {
+			category := startCategory(strings.TrimSpace(sentence))
+			if category == "" {
+				continue
+			}
+			counts[category]++
+			total++
+		}
+	}
+	if total == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(counts))
+	for category, count := range counts {
+		out[category] = round2(float64(count) / float64(total))
+	}
+	return out
+}
+
+func startCategory(text string) string {
+	if text == "" {
+		return ""
+	}
+	if strings.HasPrefix(text, "“") || strings.HasPrefix(text, "\"") || strings.HasPrefix(text, "「") || strings.HasPrefix(text, "『") {
+		return "dialogue"
+	}
+	if hasPrefix(text, []string{"然而", "与此同时", "此时", "这时", "可是", "但是", "随后", "于是", "后来", "终于", "忽然", "突然"}) {
+		return "abstract_connector"
+	}
+	if hasPrefix(text, []string{"夜里", "夜色", "清晨", "黎明", "天亮", "晨光", "黄昏", "雨里", "雨声", "门外", "窗外", "街上", "屋里", "院中"}) {
+		return "time_place"
+	}
+	first := []rune(text)[0]
+	if strings.ContainsRune("他她它我你", first) {
+		return "pronoun"
+	}
+	if strings.ContainsRune("走站坐伸抬低握推拉看看听问说笑转拿放踩奔跑躲捡撕扔", first) {
+		return "action"
+	}
+	return "other"
+}
+
+func hasPrefix(text string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func emotionLabelDensity(text string) float64 {
+	total := chineseRuneCount(text)
+	if total == 0 {
+		return 0
+	}
+	count := 0
+	for _, label := range emotionLabels {
+		count += strings.Count(text, label)
+	}
+	return round2(float64(count) * 1000 / float64(total))
+}
+
+func vectorDistance(a, b map[string]float64) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	keys := map[string]struct{}{}
+	for key := range a {
+		keys[key] = struct{}{}
+	}
+	for key := range b {
+		keys[key] = struct{}{}
+	}
+	sum := 0.0
+	for key := range keys {
+		delta := a[key] - b[key]
+		if delta < 0 {
+			delta = -delta
+		}
+		sum += delta
+	}
+	return round2(sum)
+}
+
+func dominantRatio(ratios map[string]float64) (string, float64) {
+	var category string
+	var value float64
+	for key, ratio := range ratios {
+		if ratio > value || (ratio == value && key < category) {
+			category = key
+			value = ratio
+		}
+	}
+	return category, value
+}
+
+func chineseRuneCount(text string) int {
+	count := 0
+	for _, r := range text {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			count++
+		}
+	}
+	return count
+}
+
 func lastNonEmptyLine(text string) string {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -356,3 +533,4 @@ func truncateRunes(s string, n int) string {
 
 func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }
 func round2(f float64) float64 { return float64(int(f*100+0.5)) / 100 }
+func round3(f float64) float64 { return float64(int(f*1000+0.5)) / 1000 }
