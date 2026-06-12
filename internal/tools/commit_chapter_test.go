@@ -298,6 +298,44 @@ func TestCommitChapterRewriteOverwritesStyleStats(t *testing.T) {
 	}
 }
 
+func TestRewriteTextChangeUsesEditDistanceForInsertions(t *testing.T) {
+	editRatio, changedRatio := rewriteTextChange("甲乙丙丁戊", "甲乙新丙丁戊")
+	if editRatio != 0.17 || changedRatio != 0.17 {
+		t.Fatalf("expected insertion to count as one edit over max length, got edit=%.2f changed=%.2f", editRatio, changedRatio)
+	}
+}
+
+func TestStyleComparisonIncludesNewAIToneMetrics(t *testing.T) {
+	before := &domain.StyleStats{Metrics: map[string]domain.StyleMetric{
+		domain.StyleMetricSentenceStartDominantCategoryRatio:  {Value: 0.8},
+		domain.StyleMetricSentenceStartAbstractConnectorRatio: {Value: 0.4},
+		domain.StyleMetricEmotionLabelDensityPer1000:          {Value: 8},
+	}}
+	after := &domain.StyleStats{Metrics: map[string]domain.StyleMetric{
+		domain.StyleMetricSentenceStartDominantCategoryRatio:  {Value: 0.5},
+		domain.StyleMetricSentenceStartAbstractConnectorRatio: {Value: 0.2},
+		domain.StyleMetricEmotionLabelDensityPer1000:          {Value: 3},
+	}}
+
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	comparison, err := NewCommitChapterTool(s).saveStyleRewriteComparison(1, "polish", "甲乙", "甲丙", before, after)
+	if err != nil {
+		t.Fatalf("saveStyleRewriteComparison: %v", err)
+	}
+	for _, metric := range []string{
+		domain.StyleMetricSentenceStartDominantCategoryRatio,
+		domain.StyleMetricSentenceStartAbstractConnectorRatio,
+		domain.StyleMetricEmotionLabelDensityPer1000,
+	} {
+		if !containsString(comparison.ImprovedMetrics, metric) {
+			t.Fatalf("expected %s to improve, got %+v", metric, comparison.ImprovedMetrics)
+		}
+	}
+}
+
 func styleStatsHasRule(stats *domain.StyleStats, ruleID string) bool {
 	for _, hotspot := range stats.Hotspots {
 		if hotspot.RuleID == ruleID {
@@ -313,6 +351,15 @@ func diagnosticGuidanceHasRule(guidance *domain.DiagnosticGuidance, rule string)
 	}
 	for _, item := range guidance.Items {
 		if item.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
 			return true
 		}
 	}

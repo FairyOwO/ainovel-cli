@@ -544,8 +544,9 @@ func rewriteTextChange(beforeText, afterText string) (float64, float64) {
 	if maxLen == 0 {
 		return 0, 0
 	}
-	editRatio := float64(levenshteinCapped(beforeRunes, afterRunes, 2000)) / float64(maxLen)
-	changedRatio := changedRuneRatio(beforeRunes, afterRunes)
+	distance := levenshteinCapped(beforeRunes, afterRunes, 2000)
+	editRatio := float64(distance) / float64(maxLen)
+	changedRatio := float64(distance) / float64(maxLen)
 	return round2(editRatio), round2(changedRatio)
 }
 
@@ -597,34 +598,22 @@ func sampleRunes(runes []rune, limit int) []rune {
 	return out
 }
 
-func changedRuneRatio(a, b []rune) float64 {
-	maxLen := max(len(a), len(b))
-	if maxLen == 0 {
-		return 0
-	}
-	limit := min(len(a), len(b))
-	changed := maxLen - limit
-	for i := 0; i < limit; i++ {
-		if a[i] != b[i] {
-			changed++
-		}
-	}
-	return float64(changed) / float64(maxLen)
-}
-
 func round2(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
 func styleComparisonMetricKeys() []string {
 	return []string{
-		"sentence_length_stddev",
-		"sentence_start_unique_rate",
-		"paragraph_length_stddev",
-		"paragraph_uniform_ratio",
-		"pattern_density_per_1000",
-		"repeated_ngram_rate",
-		"homogeneous_sentence_ratio",
+		domain.StyleMetricSentenceLengthStddev,
+		domain.StyleMetricSentenceStartUniqueRate,
+		domain.StyleMetricSentenceStartDominantCategoryRatio,
+		domain.StyleMetricSentenceStartAbstractConnectorRatio,
+		domain.StyleMetricParagraphLengthStddev,
+		domain.StyleMetricParagraphUniformRatio,
+		domain.StyleMetricPatternDensityPer1000,
+		domain.StyleMetricRepeatedNGramRate,
+		domain.StyleMetricHomogeneousSentenceRatio,
+		domain.StyleMetricEmotionLabelDensityPer1000,
 	}
 }
 
@@ -634,12 +623,12 @@ func classifyStyleMetricDelta(key string, delta float64) string {
 		return "unchanged"
 	}
 	switch key {
-	case "sentence_length_stddev", "sentence_start_unique_rate", "paragraph_length_stddev":
+	case domain.StyleMetricSentenceLengthStddev, domain.StyleMetricSentenceStartUniqueRate, domain.StyleMetricParagraphLengthStddev:
 		if delta > 0 {
 			return "improved"
 		}
 		return "worsened"
-	case "paragraph_uniform_ratio", "pattern_density_per_1000", "repeated_ngram_rate", "homogeneous_sentence_ratio":
+	case domain.StyleMetricParagraphUniformRatio, domain.StyleMetricPatternDensityPer1000, domain.StyleMetricRepeatedNGramRate, domain.StyleMetricHomogeneousSentenceRatio, domain.StyleMetricEmotionLabelDensityPer1000, domain.StyleMetricSentenceStartDominantCategoryRatio, domain.StyleMetricSentenceStartAbstractConnectorRatio:
 		if delta < 0 {
 			return "improved"
 		}
@@ -779,7 +768,7 @@ func styleMetricGuidance(chapter int, stats *domain.StyleStats) []domain.Diagnos
 		return nil
 	}
 	var items []domain.DiagnosticGuidanceItem
-	if value, ok := styleMetricValue(stats, "emotion_label_density_per_1000"); ok && value >= 6 {
+	if value, ok := styleMetricValue(stats, domain.StyleMetricEmotionLabelDensityPer1000); ok && value >= domain.StyleThresholdEmotionLabelDensity {
 		items = append(items, domain.DiagnosticGuidanceItem{
 			Rule:       "EmotionLabelDensity",
 			Severity:   "warning",
@@ -789,7 +778,7 @@ func styleMetricGuidance(chapter int, stats *domain.StyleStats) []domain.Diagnos
 			Suggestion: "把紧张/愤怒/悲伤等标签改成身体反应、动作选择和环境压力。",
 		})
 	}
-	if value, ok := styleMetricValue(stats, "sentence_start_dominant_category_ratio"); ok && value >= 0.55 {
+	if value, ok := styleMetricValue(stats, domain.StyleMetricSentenceStartDominantCategoryRatio); ok && value >= domain.StyleThresholdSentenceStartDominantRatio {
 		items = append(items, domain.DiagnosticGuidanceItem{
 			Rule:       "SentenceStartDominance",
 			Severity:   "info",
@@ -811,7 +800,7 @@ func styleMetricValue(stats *domain.StyleStats, key string) (float64, bool) {
 }
 
 func rewriteComparisonGuidance(comparison domain.StyleRewriteComparison) (domain.DiagnosticGuidanceItem, bool) {
-	lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < 0.08
+	lowEdit := comparison.EditDistanceRatio > 0 && comparison.EditDistanceRatio < domain.StyleThresholdLowEditDistanceRatio
 	if !lowEdit && len(comparison.WorsenedMetrics) == 0 && !(len(comparison.ImprovedMetrics) == 0 && len(comparison.UnchangedMetrics) >= 3) {
 		return domain.DiagnosticGuidanceItem{}, false
 	}
