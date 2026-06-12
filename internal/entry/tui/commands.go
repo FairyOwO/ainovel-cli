@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/voocel/ainovel-cli/internal/host"
@@ -30,11 +31,50 @@ func parseSlashCommand(text string) (slashCommand, bool) {
 	if !strings.HasPrefix(text, "/") {
 		return slashCommand{}, false
 	}
-	fields := strings.Fields(strings.TrimPrefix(text, "/"))
+	fields := slashCommandFields(strings.TrimPrefix(text, "/"))
 	if len(fields) == 0 {
 		return slashCommand{}, false
 	}
 	return slashCommand{name: strings.ToLower(fields[0]), args: fields[1:]}, true
+}
+
+func slashCommandFields(text string) []string {
+	var fields []string
+	var field strings.Builder
+	inQuote := rune(0)
+	started := false
+	flush := func() {
+		if started {
+			fields = append(fields, field.String())
+			field.Reset()
+			started = false
+		}
+	}
+
+	for _, r := range text {
+		if inQuote != 0 {
+			if r == inQuote {
+				inQuote = 0
+				continue
+			}
+			field.WriteRune(r)
+			started = true
+			continue
+		}
+
+		switch {
+		case r == '\'' || r == '"':
+			inQuote = r
+			started = true
+		case unicode.IsSpace(r):
+			flush()
+		default:
+			field.WriteRune(r)
+			started = true
+		}
+	}
+	flush()
+	return fields
 }
 
 func (s slashCommandSpec) matches(name string) bool {
