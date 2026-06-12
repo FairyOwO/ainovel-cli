@@ -304,6 +304,8 @@ type Host struct {
     routerDetach func()
     usage        *UsageTracker
     usageCancel  context.CancelFunc
+    budget       *BudgetSentinel   // Host 政策组件：执行用户预算声明（等同代为 Abort），订阅先于 Dispatcher
+    notifier     *notify.Notifier  // 观察层：run_end/repeat/budget 三类告警的离屏副本，永不介入控制流
 
     events, streamCh, done chan ...
 
@@ -452,6 +454,7 @@ assets/
 12. **不写 Host 端的 Flow 状态机**。Flow 标签只由工具更新，Router 只读不写。
 13. **不为"LLM 幻觉"写兜底硬编码**。优化 prompt、改进工具返回值结构、让 `novel_context` 更清楚地呈现事实——而不是 Host 强制改流程。
 14. **不让 diag / 观察层介入控制流**。诊断只读、只产 Finding 与脱敏导出；自动修复 / 续跑 / 改流程一律不做（见 §2.3 观察者纪律）。
+15. **预算与告警不进 Route/工具层，告警不进控制流**。`BudgetSentinel` 是 Host 政策组件（执行用户预先签署的 Abort，不评估模型行为）；`notify` 是纯观察（不重试、不改派、不停机）。`flow.Route` 保持纯函数，对两者无感知。
 
 ---
 
@@ -475,6 +478,8 @@ assets/
 ### 11.3 质量迭代
 
 改 `writer.md` 立刻产生风格变化；新增 editor 评审维度向后兼容（save_review 接收结构化 JSON）。新增一篇参考资料 md 需三处接线（`tools.References` 字段 + `assets/load.go` 的 `loadReferences` + `novel_context.go` 的 `writerReferences`/`architectReferences` 注入），不是放进目录即自动加载——`References` 是显式字段映射，便于按角色/章节裁剪。
+
+**全书级风格统计（`internal/stylestat`）**：弧内评审窗口对"句式 tic 章均几十次、章末形态同构、跨章逐字复读"这类全书级固化天然失明——单章看每处都正常。`novel_context` 章节路径对全部已完成章节跑确定性统计（句式模式类/近窗高频短语/跨章重复句/章末形态/标题格式混用），注入 `episodic_memory.style_stats`：editor 在 aesthetic 维度按数字裁定，writer 据此自避免。**统计归代码，裁定归 LLM**——阈值不写死在代码里，数字是否成病由模型按题材判断。与其并列的产品底线 `rules.Lint`（markdown 残留/非中文片段）在 commit_chapter 始终执行，仅返事实。
 
 ---
 

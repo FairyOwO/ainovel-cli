@@ -98,6 +98,11 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 		seed.apply(result)
 		t.buildChapterContext(result, state, warn)
 		t.buildBenchmarkSummaries(result, "working_memory", warn)
+		// 数据语义标注（治复读交代）：episodic 是已写入正文的备忘，不是待写素材。
+		// 只挂容器内，不进顶层镜像。
+		if epi, ok := result["episodic_memory"].(map[string]any); ok && len(epi) > 0 {
+			epi["_usage"] = "本容器为已写入正文的事实备忘（供一致性与衔接对照）；在新章正文中原样复述这些内容属于重复缺陷"
+		}
 	} else {
 		// Coordinator/Architect 路径：只返回状态 + 结构化数据，不加载全量原文
 		t.buildProgressStatus(result)
@@ -511,6 +516,7 @@ func trimByBudget(result map[string]any, budget int) {
 		"voice_samples",
 		"style_anchors",
 		"style_rules",
+		"style_stats",
 		"previous_tail",
 		"timeline",
 		"recent_state_changes",

@@ -26,8 +26,8 @@ func NewCommitChapterTool(store *store.Store) *CommitChapterTool {
 	return &CommitChapterTool{store: store}
 }
 
-// WithRules 注入规则加载选项，使 commit_chapter 在返回 JSON 中附带 rule_violations。
-// 不调用此方法时 commit_chapter 行为不变（向后兼容，便于测试）。
+// WithRules 注入用户规则加载选项，使 rule_violations 中附带用户规则检查结果。
+// 不调用此方法时仅执行内置底线 Lint（机制残留检查，始终开启）。
 func (t *CommitChapterTool) WithRules(opts rules.LoadOptions) *CommitChapterTool {
 	t.rulesOpts = opts
 	return t
@@ -337,16 +337,17 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("checkpoint commit: %w: %w", errs.ErrStoreWrite, err)
 	}
 
-	// 11. 机械规则检查（仅返事实，不阻断；rulesOpts 未配置时返 nil）
+	// 11. 机械规则检查（仅返事实，不阻断）
 	violations := t.checkRules(content, wordCount)
 	return json.Marshal(commitOutput{CommitResult: result, RuleViolations: violations})
 }
 
-// checkRules 加载用户规则并对给定章节正文做机械检查。
-// rulesOpts 全空时 loader 返回空 layers，checker 返 nil，整体零开销。
+// checkRules 对章节正文做机械检查：内置产品底线 Lint（机制残留，始终执行）
+// + 用户规则 Check（rulesOpts 全空时 loader 返回空 layers，checker 返 nil）。
 func (t *CommitChapterTool) checkRules(text string, wordCount int) []rules.Violation {
+	violations := rules.Lint(text)
 	bundle := rules.Merge(rules.Load(t.rulesOpts))
-	return rules.Check(text, wordCount, bundle.Structured)
+	return append(violations, rules.Check(text, wordCount, bundle.Structured)...)
 }
 
 // executeRewriteCommit 处理打磨/重写章节的提交：覆盖终稿与摘要、更新字数、drain 队列。

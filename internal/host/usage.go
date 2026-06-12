@@ -53,6 +53,14 @@ type UsageTracker struct {
 	// saveCh 由 Record 在累加后非阻塞触发；autoSaveLoop 监听并按 debounce 落盘。
 	// buffered=1：连续多次 Record 折叠为一次落盘信号；满了直接丢，下个 tick 一并写。
 	saveCh chan struct{}
+
+	// onCost 在每次记账后于锁外携带最新累计成本调用（BudgetSentinel 越线检测）。
+	// 必须在并发 Record 开始前通过 SetOnCost 设置，之后只读。
+	onCost func(total float64)
+
+	// onMissingUsage 在首次发现"assistant 消息无 Usage"时调用一次（与 slog warn
+	// 同时机）。预算启用时这意味着计费盲区——成本恒 0、预算永不触发，必须喊人。
+	onMissingUsage func()
 }
 
 // usageSample 是单次 OnMessage 的命中样本，仅记录命中率分子分母。
@@ -130,8 +138,20 @@ func (t *UsageTracker) flagMissingUsage(agentName string) {
 	if shouldLog {
 		slog.Warn("LLM 响应未携带 usage 数据，缓存/成本面板将无累计——通常是上游 streaming 未按 OpenAI include_usage 协议发 final usage chunk",
 			"module", "usage", "agent", agentName)
+		if t.onMissingUsage != nil {
+			t.onMissingUsage()
+		}
 	}
 	t.notifyDirty()
+}
+
+// SetOnMissingUsage 注册"首次发现 usage 缺失"的一次性回调。
+// 必须在 Host 构造期、并发 Record 开始前调用一次。
+func (t *UsageTracker) SetOnMissingUsage(cb func()) {
+	if t == nil {
+		return
+	}
+	t.onMissingUsage = cb
 }
 
 // notifyDirty 非阻塞触发一次落盘信号，由 autoSaveLoop 按 debounce 实际写入。
@@ -172,9 +192,22 @@ func (t *UsageTracker) accumulate(role, provider, modelName string, u agentcore.
 		}
 		addUsage(perModel, u, cost, saved, capable)
 	}
+	total := t.overall.Cost
 	t.mu.Unlock()
 
 	t.notifyDirty()
+	if t.onCost != nil {
+		t.onCost(total)
+	}
+}
+
+// SetOnCost 注册记账回调（携带最新累计成本，锁外调用）。
+// 必须在 Host 构造期、并发 Record 开始前调用一次。
+func (t *UsageTracker) SetOnCost(cb func(total float64)) {
+	if t == nil {
+		return
+	}
+	t.onCost = cb
 }
 
 func (t *UsageTracker) effectiveModel(role, provider, modelName string) (string, string) {

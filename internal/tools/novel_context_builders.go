@@ -9,6 +9,7 @@ import (
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
+	"github.com/voocel/ainovel-cli/internal/stylestat"
 )
 
 var benchmarkChapterPattern = regexp.MustCompile(`(?i)(?:第\s*(\d+)\s*[章节回话]|ch(?:apter)?\s*\.?\s*(\d+))`)
@@ -373,7 +374,62 @@ func (t *ContextTool) buildChapterContext(result map[string]any, state contextBu
 	t.buildChapterWorkingMemory(&envelope, state, warn)
 	t.buildChapterReferencePack(&envelope, state)
 	t.buildChapterSelectedMemory(&envelope, state, warn)
+	t.buildStyleStats(&envelope, state)
 	envelope.apply(result)
+}
+
+// buildStyleStats 对全部已完成章节做全书级风格统计，注入 episodic_memory.style_stats。
+// 弧内评审窗口对"章均几十次的句式 tic、章末形态同构、跨章复读"天然失明，只有
+// 全书统计能暴露——统计归代码（确定性），裁定归 LLM（editor 在 aesthetic 维度
+// 按数字判分，writer 据此自避免）。章数不足时 stylestat 返回 nil，不注入。
+func (t *ContextTool) buildStyleStats(envelope *chapterContextEnvelope, state contextBuildState) {
+	if state.progress == nil || len(state.progress.CompletedChapters) == 0 {
+		return
+	}
+	completed := slices.Clone(state.progress.CompletedChapters)
+	slices.Sort(completed)
+	chapters := make([]string, 0, len(completed))
+	for _, ch := range completed {
+		// 个别章读取失败跳过：统计是 best-effort 事实，不因单章缺失放弃全书视野
+		if text, err := t.store.Drafts.LoadChapterText(ch); err == nil && text != "" {
+			chapters = append(chapters, text)
+		}
+	}
+
+	var titles []string
+	if outline, err := t.store.Outline.LoadOutline(); err == nil {
+		for _, entry := range outline {
+			titles = append(titles, entry.Title)
+		}
+	}
+
+	stats := stylestat.Compute(stylestat.Input{
+		Chapters:  chapters,
+		Titles:    titles,
+		Stopwords: t.styleStopwords(),
+	})
+	if stats == nil {
+		return
+	}
+	envelope.Episodic["style_stats"] = stats
+}
+
+// styleStopwords 收集角色名与别名供短语挖掘过滤——出场人名天然高频，不是文风问题。
+func (t *ContextTool) styleStopwords() []string {
+	var words []string
+	if chars, err := t.store.Characters.Load(); err == nil {
+		for _, c := range chars {
+			words = append(words, c.Name)
+			words = append(words, c.Aliases...)
+		}
+	}
+	if cast, err := t.store.Cast.RecentActive(50); err == nil {
+		for _, e := range cast {
+			words = append(words, e.Name)
+			words = append(words, e.Aliases...)
+		}
+	}
+	return words
 }
 
 func (t *ContextTool) buildChapterWorkingMemory(envelope *chapterContextEnvelope, state contextBuildState, warn func(string, error)) {

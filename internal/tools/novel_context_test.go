@@ -14,6 +14,68 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
+func TestContextToolInjectsStyleStats(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	progress := &domain.Progress{TotalChapters: 10}
+	body := "# 第N章\n他不是迟疑，而是恐惧。沉默了几息。像一道光。\n夜色落下。\n他走了。"
+	for ch := 1; ch <= 6; ch++ {
+		if err := st.Drafts.SaveFinalChapter(ch, body); err != nil {
+			t.Fatalf("SaveFinalChapter: %v", err)
+		}
+		progress.CompletedChapters = append(progress.CompletedChapters, ch)
+	}
+	if err := st.Progress.Save(progress); err != nil {
+		t.Fatalf("Save progress: %v", err)
+	}
+
+	tool := NewContextTool(st, References{}, "default", rules.LoadOptions{})
+	args, _ := json.Marshal(map[string]any{"chapter": 7})
+	raw, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var payload struct {
+		Episodic map[string]json.RawMessage `json:"episodic_memory"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	statsRaw, ok := payload.Episodic["style_stats"]
+	if !ok {
+		t.Fatalf("expected episodic_memory.style_stats, got keys %v", keysOf(payload.Episodic))
+	}
+	var stats struct {
+		Chapters int `json:"chapters"`
+		Patterns []struct {
+			Name  string `json:"name"`
+			Total int    `json:"total"`
+		} `json:"patterns"`
+	}
+	if err := json.Unmarshal(statsRaw, &stats); err != nil {
+		t.Fatalf("Unmarshal stats: %v", err)
+	}
+	if stats.Chapters != 6 || len(stats.Patterns) == 0 {
+		t.Errorf("stats content: %+v", stats)
+	}
+	if usage, ok := payload.Episodic["_usage"]; !ok || len(usage) == 0 {
+		t.Error("expected episodic_memory._usage annotation")
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func TestContextToolReportsWarningsForCorruptedState(t *testing.T) {
 	dir := t.TempDir()
 	store := store.NewStore(dir)

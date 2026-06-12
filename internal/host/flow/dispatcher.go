@@ -29,7 +29,15 @@ type Dispatcher struct {
 	lastMu   sync.Mutex
 	lastSent *Instruction
 	repeats  int
+
+	// onRepeat 是纯 telemetry 回调（无人值守告警用），在同一指令第 repeatNotifyAt
+	// 次下达时触发一次；不反向影响派发，派发逻辑对它的存在无感知。
+	onRepeat func(agent, task string, n int)
 }
+
+// repeatNotifyAt 写死不进配置：它不是控制流阈值（不触发任何动作，只是"喊人"），
+// 调它没有收益；进配置反而暗示可调出行为差异。
+const repeatNotifyAt = 3
 
 // NewDispatcher 创建 Dispatcher。使用前需调用 Attach 订阅事件。
 func NewDispatcher(coordinator *agentcore.Agent, store *storepkg.Store) *Dispatcher {
@@ -91,19 +99,30 @@ func formatDispatchMessage(inst *Instruction, n int) string {
 	return msg
 }
 
+// SetOnRepeat 注册重复指令的 telemetry 回调。须在 Attach/派发开始前调用一次。
+func (d *Dispatcher) SetOnRepeat(cb func(agent, task string, n int)) {
+	d.onRepeat = cb
+}
+
 // trackRepeat 记录连续相同指令的下达次数并返回当前次数（1 = 新指令）。
 // 用 Agent+Task 相等性（不比 Reason，因为 Reason 是给人看的辅助文本）。
+// 次数恰好到 repeatNotifyAt 时在锁外触发一次 onRepeat（键变更重计数后重新武装）。
 func (d *Dispatcher) trackRepeat(next *Instruction) int {
 	d.lastMu.Lock()
-	defer d.lastMu.Unlock()
 	if d.lastSent != nil && d.lastSent.Agent == next.Agent && d.lastSent.Task == next.Task {
 		d.repeats++
-		return d.repeats
+	} else {
+		cp := *next
+		d.lastSent = &cp
+		d.repeats = 1
 	}
-	cp := *next
-	d.lastSent = &cp
-	d.repeats = 1
-	return 1
+	n := d.repeats
+	d.lastMu.Unlock()
+
+	if n == repeatNotifyAt && d.onRepeat != nil {
+		d.onRepeat(next.Agent, next.Task, n)
+	}
+	return n
 }
 
 // ResetRepeat 清空重复追踪。Resume / 新 Start 时 Host 调用，

@@ -413,11 +413,13 @@ func (m Model) handleRuntimeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshEventViewport()
 		return m, listenEvents(m.runtime), true
 	case bootstrapMsg:
+		// 先回放历史事件再处理错误：Resume 被拒（如预算上限）是常规路径，
+		// 用户需要在看得到历史的前提下读到拒绝原因，而不是面对空白事件流。
+		m.applyRuntimeReplay(msg.replay)
 		if msg.err != nil {
 			m.err = msg.err
 			return m, fetchSnapshot(m.runtime), true
 		}
-		m.applyRuntimeReplay(msg.replay)
 		if msg.resumed && m.mode == modeNew {
 			enableMouse := m.enterRunning()
 			m.resizeTextarea()

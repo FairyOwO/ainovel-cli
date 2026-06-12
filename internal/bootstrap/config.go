@@ -127,7 +127,34 @@ type Config struct {
 	// 或把大窗口模型钉在更小的值上提前触发压缩（1M 名义窗口在 200k+ 通常已注意力衰退）。
 	// 仅影响压缩阈值，不改变 LLM API 实际请求长度；配置值由用户自负其责。
 	ContextWindow int `json:"context_window,omitempty"`
+
+	// Budget 单本书的成本预算政策；book_usd > 0 才启用。
+	Budget BudgetConfig `json:"budget,omitzero"`
+
+	// Notify 无人值守告警配置；缺省启用（system 通道兜底）。
+	Notify NotifyConfig `json:"notify,omitzero"`
 }
+
+// BudgetConfig 是用户对单本书钱包的政策声明。越线停机等同于用户在那一刻
+// 手动 Abort——Host 只代为执行，不评估模型行为（架构 §10 合宪边界）。
+type BudgetConfig struct {
+	BookUSD   float64 `json:"book_usd,omitempty"`   // 必填才启用；0/缺省 = 不限
+	WarnRatio float64 `json:"warn_ratio,omitempty"` // 告警水位，默认 0.8
+	HardStop  bool    `json:"hard_stop,omitempty"`  // true=越线立即停；默认等当前子代理任务结束
+}
+
+// Enabled 返回预算政策是否启用。
+func (b BudgetConfig) Enabled() bool { return b.BookUSD > 0 }
+
+// NotifyConfig 无人值守告警通道配置。
+type NotifyConfig struct {
+	Enabled *bool    `json:"enabled,omitempty"` // 缺省 true（system 通道零配置可用）
+	Command string   `json:"command,omitempty"` // 可选，配置后替代 system 通道（手机推送走这里）
+	Events  []string `json:"events,omitempty"`  // 可选，过滤 kind（run_end/repeat/budget），缺省全开
+}
+
+// IsEnabled 返回告警是否启用（缺省 true）。
+func (n NotifyConfig) IsEnabled() bool { return n.Enabled == nil || *n.Enabled }
 
 // ValidateBase 校验基础配置。
 func (c *Config) ValidateBase() error {
@@ -204,8 +231,28 @@ func (c *Config) ValidateBase() error {
 		}
 	}
 
+	// 校验预算政策
+	if c.Budget.BookUSD < 0 {
+		return fmt.Errorf("budget.book_usd must be >= 0: %w", errs.ErrConfig)
+	}
+	if c.Budget.Enabled() && (c.Budget.WarnRatio <= 0 || c.Budget.WarnRatio >= 1) {
+		return fmt.Errorf("budget.warn_ratio must be in (0, 1): %w", errs.ErrConfig)
+	}
+
+	// 校验告警配置
+	if err := validateConfigText("notify.command", c.Notify.Command); err != nil {
+		return err
+	}
+	for _, ev := range c.Notify.Events {
+		if !knownNotifyEvents[ev] {
+			return fmt.Errorf("unknown notify event %q (valid: run_end/repeat/budget): %w", ev, errs.ErrConfig)
+		}
+	}
+
 	return nil
 }
+
+var knownNotifyEvents = map[string]bool{"run_end": true, "repeat": true, "budget": true}
 
 func validateProviderConfigText(name string, pc ProviderConfig) error {
 	fields := []struct {
@@ -257,6 +304,9 @@ func (c *Config) FillDefaults() {
 	}
 	if c.Style == "" {
 		c.Style = "default"
+	}
+	if c.Budget.Enabled() && c.Budget.WarnRatio == 0 {
+		c.Budget.WarnRatio = 0.8
 	}
 }
 

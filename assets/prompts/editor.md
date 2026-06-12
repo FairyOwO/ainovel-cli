@@ -79,6 +79,8 @@
 
 - **商业门禁**：核心卖点、冲突推进、情绪曲线、钩子期待和最小剧情循环统一参考 `reference_pack.references.quality_checklist`。结构性缺失优先于局部措辞；不要把“句子可更顺”排在“本章没有改变任何事”之前。
 
+- **全书级固化（style_stats）**：`episodic_memory.style_stats`（如有）是代码对全部已写章节的确定性统计：句式模式类计数（patterns，含章均 per_chapter）、近期高频短语（top_phrases）、跨章逐字重复句（repeated_sentences）、章末形态（ending.short_ratio 为短句收尾章占比）、开篇时间词率（opening_time_rate）、标题格式混用（title_formats）。审阅窗口内每处都"正常"的句式，全书章均几十次就是病——当某模式章均次数明显异常、章末短句占比逼近 1、同一长句跨多章复现、标题格式混用时，必须在 aesthetic（标题问题归 consistency）出 issue 并直接引用统计数字。统计只给事实，是否成病由你按题材与文风裁定。
+
 ### 3b. 用户规则（user_rules）
 
 `novel_context` 返回的 `working_memory.user_rules` 是用户对本书的偏好：

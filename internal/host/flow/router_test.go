@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -271,5 +272,30 @@ func TestFormatDispatchMessage_RepeatNotice(t *testing.T) {
 		if !contains(third, want) {
 			t.Errorf("重复注记缺少 %q: %s", want, third)
 		}
+	}
+}
+
+func TestDispatcher_OnRepeatFiresOnceAtThreshold(t *testing.T) {
+	d := &Dispatcher{}
+	var fired []string
+	d.SetOnRepeat(func(agent, task string, n int) {
+		fired = append(fired, fmt.Sprintf("%s|%s|%d", agent, task, n))
+	})
+
+	inst := &Instruction{Agent: "writer", Task: "写第 5 章"}
+	for range 6 {
+		d.trackRepeat(inst) // n=1..6：只在 n==3 时回调一次
+	}
+	if len(fired) != 1 || fired[0] != fmt.Sprintf("writer|写第 5 章|%d", repeatNotifyAt) {
+		t.Fatalf("应恰好在第 %d 次触发一次，got %v", repeatNotifyAt, fired)
+	}
+
+	// 键变更后重新武装：换任务再连续 3 次 → 再触发一次
+	other := &Instruction{Agent: "writer", Task: "写第 6 章"}
+	for range 3 {
+		d.trackRepeat(other)
+	}
+	if len(fired) != 2 {
+		t.Fatalf("键变更后应重新武装，got %v", fired)
 	}
 }
